@@ -31,6 +31,7 @@ CASM    ?= $(TARGET)
 EXA_DIR := examples
 EXA_SRC := $(wildcard $(EXA_DIR)/*.asm)
 EXA_PRG := $(EXA_SRC:.asm=.prg)
+EXA_DAT := $(wildcard $(EXA_DIR)/*.dat)
 LIB_DIR := lib
 AFLAGS  ?=
 #--warn-unused
@@ -81,7 +82,7 @@ test:
 	done
 
 
-examples: $(TARGET) $(EXA_PRG) $(DISK_FILE)
+examples: $(TARGET) $(EXA_PRG) $(DISK_FILE) data
 
 $(EXA_PRG):
 
@@ -111,9 +112,13 @@ $(DISK_FILE): $(EXA_PRG)
 		$(VICE_C1541) $(DISK_FILE) -write "$$file" "$$progname" >> disk.log;\
 	done
 
-
-# /Applications/vice-arm64-gtk3-3.10/bin/c1541 -format "C64asm,1" d64 examples.d64
-# c1541 -format "disk name" id d64 "image_name.d64"
-# To write a .prg file into an existing D64 image:
-# c1541 "image_name.d64" -write "my_program.prg" "c64_filename"
+data:
+	@echo "Adding data files $(EXA_DAT)"
+	@for file in $(EXA_DAT); do \
+		lower=$$(echo "$${file}" | tr 'A-Z' 'a-z'); \
+		lower=$${lower//examples\//}; \
+		lower=$${lower//.dat/}; \
+		echo "adding file: $$file as $$lower"; \
+		$(VICE_C1541) $(DISK_FILE) -write "$$file" "$$lower,s" >> disk.log; \
+	done
 

@@ -13,6 +13,719 @@ this project's full regression suite before being marked done — that
 discipline is this project's own standing practice, not something
 worth repeating in every entry below.
 
+## `maze.asm`: stage 6 (power pellet vulnerability)
+
+Power pellets do something now: eating one starts a timed
+vulnerability window where both enemies flee, turn a shared
+frightened color, and move at half their own already-throttled
+speed; touching a frightened enemy eats it (bonus score, resets just
+that one enemy to its own start tile) instead of the player getting
+caught. Touching a normal enemy still catches the player exactly as
+before. Eating a second pellet mid-window refreshes the full duration
+rather than stacking past it or being ignored.
+
+Fleeing reuses the existing chase framework rather than needing new
+logic: decide_enemy_direction and consider_enemy_candidate already
+compute Manhattan distance to the player for every open neighboring
+tile; a single flag (enemy_frightened) now decides whether the
+*closest* one wins (chasing) or the *farthest* one does (fleeing),
+the same distance calculation compared in the opposite direction. One
+real edge case surfaced while designing this and was fixed before it
+ever shipped, not found by testing after the fact: a distance
+sentinel chosen to always lose when minimizing (a very large number)
+would incorrectly reject a genuinely valid distance-0 candidate when
+maximizing instead, since 0 isn't greater than a sentinel of 0.
+Replaced with an explicit "found anything yet" flag instead of
+relying on any specific starting value's own meaning surviving a
+flipped comparison direction.
+
+Built with one small extension point for whatever pellet types come
+later: `activate_pellet_effect` is its own separate routine (currently
+just calling `start_enemy_vulnerability`), not inlined into
+`check_eat_dot`'s own pellet-eating logic — a future pellet type (a
+different tile value from `TILE_PELLET`, dispatched to a different
+effect routine here) won't need that existing logic restructured to
+make room for it.
+
+Testing this needed real care around two mini6502.py-specific timing
+behaviors, both traced to their actual cause rather than patched
+around blindly:
+
+- Each frame here turns out to be only ~350-1500 instructions, far
+  fewer than several existing tests already assumed when picking
+  round-number instruction budgets like 200,000 for "let this
+  happen." Against a 400-frame vulnerability window, a 200,000-
+  instruction budget intended to mean "right after eating this
+  pellet" could actually span 500+ frames -- long enough for the
+  entire window to start *and fully expire* before the check ever
+  ran, reading back a timer of exactly 0 and looking like the pellet
+  was never eaten at all when it plainly had been (confirmed
+  directly: the pellet was gone from the grid, just the window had
+  already run its full course). Every new test that needs to check
+  state right after a specific single frame now uses this project's
+  own established step-to-loop-top technique for exactly one
+  iteration, not a large fixed instruction count sized for a
+  different, coarser purpose.
+- mini6502.py doesn't simulate the VIC-II's own real behavior of
+  clearing SPRITE_SPRITE_COLLISION the moment it's read -- a poked
+  test value simply stays there across every subsequent frame until
+  something explicitly clears it. For collision responses whose
+  *own* effect changes what a repeated read of that same stale value
+  means (eating a frightened enemy clears its own frightened flag, so
+  a second frame reprocessing the same "collision" would treat the
+  now-normal enemy as dangerous and incorrectly reset the player
+  instead) this needed the collision register cleared by hand right
+  after the one frame that's supposed to see it, matching what real
+  hardware would have already done automatically. Existing collision
+  tests from stage 5 happened not to need this: their own responses
+  are idempotent (repeatedly "catching" the player already at its own
+  start tile changes nothing further), which is exactly why this
+  gap in mini6502.py's own fidelity never surfaced there.
+
+A third, pre-existing test (from stage 2, well before enemies existed)
+also needed a real update, not a workaround: it pre-poked
+SPRITE_X_MSB's own bits 1-7 as "pretend other sprites" and expected
+them frozen across a long run -- valid when nothing else used that
+register, but bits 1 and 2 are real, actively-managed enemy sprites as
+of stage 5, and correctly change based on their own real position now.
+Poking the register there also needed moving to a clean loop boundary
+first, the same reasoning already established for every other mid-run
+poke in this file: landing mid-instruction risks the poke being
+silently overwritten by an already in-flight read that captured the
+old value first. Fixed to only check the genuinely still-unused bits
+(3-7), landing the poke correctly, and confirmed this reflects a real
+behavior change (real sprites managing real bits) rather than
+papering over an actual regression.
+
+## `maze.asm`: enemies slowed down (75% of the player's own speed)
+
+Reported directly after playtesting stage 5's own chase AI: the
+enemies felt a bit too fast at a straight 1:1 frame rate. Rather than
+shrinking MOVE_SPEED itself (which would need sub-pixel/fractional
+position tracking to express a speed between whole pixels per frame),
+update_enemies now throttles how *often* a full MOVE_SPEED step
+happens instead: a new frame counter, and two named, easy-to-retune
+constants (ENEMY_THROTTLE_MASK/ENEMY_THROTTLE_SKIP_FRAME) saying "skip
+movement on 1 out of every (MASK+1) frames." Only the actual AI/
+movement step is skipped on a throttled frame -- sprite-position
+update still runs every frame regardless, so whatever position an
+enemy already has stays correctly drawn even when it didn't move that
+frame.
+
+Verified by stepping frame by frame along a fully-cleared,
+unobstructed corridor and checking the *exact* per-frame movement
+pattern, not an average over many frames that a partially-blocked
+path could distort into looking approximately right for the wrong
+reason. The first version of that test assumed a fixed starting
+phase for the 4-frame skip cycle (checking for the literal sequence
+1,1,1,0 from the very first sample) -- caught immediately when it
+failed against a real, correctly-offset run (1,0,1,1,1,0,...), since
+the throttle counter's own starting phase depends on exactly how many
+frames already ran during setup, not guaranteed to align with any
+particular sample window. Fixed to check the underlying cycle instead
+(skips spaced exactly 4 apart), which is what actually matters and
+holds regardless of phase. A second, separate test confirms the
+player's own movement is completely unaffected by any of this --
+still a full pixel every single frame.
+
+## `maze.asm`: stage 5 (enemy AI)
+
+Two ghost-shaped enemies now chase the player, using VIC-II sprites 1
+and 2 alongside the player's own sprite 0. Deliberately not just the
+player's own circle recolored: two visually identical chasers would
+read as far less alive than something actually shaped like an
+adversary, so this stage's own sprite is a distinct silhouette
+(rounded top, scalloped bottom), anchored at the sprite's own (0,0)
+origin the same careful way the player's own sprite already learned
+it has to be.
+
+The chase logic itself: at each tile-aligned point, an enemy checks
+its own open neighboring tiles (walls ruled out via can_enemy_move_
+direction, a careful mirror of the existing player-only can_move_
+direction reading the enemy's own position instead -- kept as a
+separate routine specifically to avoid any risk of disturbing that
+already-proven one) and picks whichever is closest to the player's
+own current tile by Manhattan distance (`|dcol|+|drow|`) rather than
+true Euclidean distance -- no multiplication or square root needed on
+a CPU that has neither built in, just subtraction and a sign flip.
+Won't reverse its own current direction unless every other option is
+genuinely blocked (a dead end), the same reasoning the player's own
+existing turn logic already established for a different problem
+(flickering indecision) applying here too.
+
+Both enemies share a single set of AI/movement/sprite-position code,
+rather than two independent copies that could quietly drift apart
+over time: a "current enemy" working set gets loaded from whichever
+enemy's own persistent state before the shared routines run, and
+written back to it afterward. update_enemy_sprite_position itself
+generalizes the player's own update_sprite_position to target any
+sprite via indexed addressing off SPRITE0_X/SPRITE0_Y (the VIC-II's
+own regular per-sprite register spacing) and a small lookup table for
+the correct single bit of SPRITE_X_MSB, rather than the one hardcoded
+bit the player-only version can afford to use directly.
+
+Player-enemy contact uses the VIC-II's own hardware sprite-collision
+register ($D01E) for pixel-accurate detection -- verified against
+several independent sources given how significant getting a hardware
+register's own address wrong would be, the same discipline this
+file's own $01/CHAREN and CIA2_PRA work already established. On a
+hit, the player resets to its own starting tile by simply calling
+init_sprite again, rather than a second, parallel "reset position"
+routine that could drift out of sync with it -- no lives or game-over
+system yet, a deliberate, explicit scope decision, not an oversight.
+
+Worth naming directly: mini6502.py is a CPU-level simulator and
+doesn't model the VIC-II's own pixel-level sprite rendering or
+collision detection at all. check_enemy_collision's own *response* to
+a collision signal is fully tested (poking SPRITE_SPRITE_COLLISION
+directly, including a dedicated check that two enemies colliding with
+each other, without the player, correctly does nothing) -- but
+whether two sprites' own visible pixels genuinely overlap on real
+hardware is a claim this project's own test suite can't make, the
+same category of limitation already documented for the character-ROM
+borrowing (CHAREN) work. Worth confirming directly on real hardware
+or VICE.
+
+Several bugs surfaced and were fixed during this stage's own testing,
+none in the underlying AI or collision logic itself: an existing
+test's own expectation (`SPRITE_ENABLE == 0x01`) needed updating once
+enemies legitimately enabled two more sprite bits alongside the
+player's own; a synthetic dead-end test's own first version
+accidentally created a *second*, unintended dead end by not
+controlling every tile surrounding its own intended one; and new
+setup-verification tests needed the same "step to main_loop's own
+address from the true start, not after a fixed instruction budget
+already ran past it" fix this project's own stage 3 work already
+established for exactly this class of mistake -- calling it after,
+rather than instead of, a fixed-budget run continues from wherever
+execution already was, past the very first arrival this kind of check
+actually needs.
+
+## Fixed: `maze.asm`'s level load filling the screen with one tile
+
+Reported directly from real hardware: the level file loaded (the disk
+audibly spun, and the score display -- which only ever runs after a
+successful load -- showed correctly), but the whole maze rendered as
+a single repeated character instead of the actual level layout.
+
+Genuinely couldn't be reproduced in simulation despite trying --
+extended level-loading tests, deliberately different level data,
+truncated files, all passed cleanly against `mini6502.py`. Rather
+than keep guessing blindly at the cause with no way to confirm which
+guess was right, built a dedicated diagnostic tool first: `hexdump.asm`
+dumps `LEVEL1`'s own raw bytes from disk, unfiltered, plus the exact
+total byte count read all the way to EOF -- reusing `dir_raw.asm`'s
+own already-established pattern for exactly this kind of problem
+(built for the same reason: a program's own *interpretation* of file
+data can't show whether the data itself was ever actually correct).
+
+That tool's own real value here: it can distinguish a file that's
+missing, a file that's short, and a file that's correct, from each
+other, in a way `maze.asm`'s own single red-border error signal
+never could -- and it was the total byte count specifically that was
+going to answer the actual question, whichever one it turned out to
+be.
+
+Independent of whatever that count turns out to show, the underlying
+robustness gap in `load_level` was real and worth fixing either way:
+`READST` was checked once, before the read loop started, and never
+again during the 836 bytes of tile data (or the 20 bytes of title, or
+even the player's own starting position) that follow. A file that
+runs out early for any reason -- however it actually got onto the
+disk -- would leave everything past that point as whatever `CHRIN`
+happens to keep returning once nothing legitimate is left, silently,
+with no signal anything went wrong. That's exactly consistent with a
+screen full of one repeated tile: the same byte, over and over, is
+what a KERNAL post-EOF `CHRIN` return being read into `MAZE_GRID`
+many times over would produce. Fixed by checking `READST` before
+*every* `CHRIN` in `load_level`, matching `dir_raw.asm`'s own
+established, correct ordering exactly -- checked before, not after,
+since checking after would incorrectly flag a correct file's own
+final, valid byte as an error (`READST`'s own EOF bit is already set
+by the time `CHRIN` returns that last legitimate byte).
+
+A new test proves the fix directly: a level file deliberately cut off
+partway through its own tile data now correctly triggers the same
+red-border error a missing file already did, and confirms `MAZE_GRID`
+was never written past the point the file actually ran out -- still
+zero there, not leftover repeated-byte garbage.
+
+`hexdump.asm` ships as its own tool, not folded into `maze.asm`,
+since it's a diagnostic for verifying data on disk, not something the
+game itself needs at runtime -- the same reasoning `dir_raw.asm`
+already established for this project.
+
+## `maze.asm`: stage 4 (level data loaded from disk)
+
+The actual point of building this game on top of this project's own,
+by now thoroughly tested disk I/O rather than another standalone
+demo: the maze grid, the player's own starting tile, and the level's
+own title now load from a real file on disk ("LEVEL1") at startup,
+rather than being assembled directly into this program's own bytes
+the way stages 1-3 shipped with first. A different level is now a
+different 858-byte data file, not a reassembled program -- `LEVEL1.dat`
+ships alongside `maze.prg` as this game's own first level, needing
+only a rename to the plain filename `LEVEL1` once copied onto the
+same C64 disk.
+
+`load_level` reuses this project's own already-tested disk-read
+pattern directly -- the same `SETLFS`/`SETNAM`/`OPEN`/`CHKIN` sequence
+`editor.asm`'s own `do_load` already uses -- with one real difference:
+this expects an exact-size binary file and reads precisely that many
+bytes via `CHRIN`, rather than a variable-length text document padded
+with spaces past EOF the way `editor.asm`'s own `read_file_to_screen`
+does. If the file can't be opened at all, there's no safe way to
+proceed -- `MAZE_GRID` would be left entirely uninitialized -- so this
+turns the border red and halts rather than silently continuing with a
+maze that was never actually loaded; this stage doesn't yet have any
+of its own text rendering to show a real error message instead.
+
+The player's own starting position stopped being a compile-time
+constant as a direct consequence: `init_sprite` now computes the
+player's own starting pixel position from `player_start_col`/
+`player_start_row` at runtime instead, the same 16-bit-vs-8-bit split
+`player_rel_x`/`player_rel_y` themselves already needed (a genuine
+16-bit shift for X, since `player_start_col` can reach 37 and 37*8
+doesn't fit in a single byte; a plain 8-bit one for Y, which never
+needed a second byte here regardless of maze height). The level's own
+title loads into RAM too, ready for a later stage to actually display
+it (a level-select screen, say) -- this stage doesn't render it
+anywhere itself yet, a deliberate scope decision, not an oversight.
+
+Verifying the format actually generalizes, not just reloads the same
+bytes from a new location, needed a second, genuinely different level
+built specifically for one test: a different start tile, a different
+title, and an actually-altered layout (two tiles deliberately changed
+from dots to power pellets) -- confirmed the loader picks up every one
+of those differences correctly, not just the ones the original level
+happened to already have right.
+
+Two of this project's own past testing lessons paid off directly
+while building this: a test forgetting to set `joystick2 = 0` before
+checking loaded grid state (this project's own established, recurring
+category of test-harness mistake, not a new one) briefly produced a
+spurious failure -- caught and fixed the same way each previous
+instance was, by tracing to the actual cause rather than adjusting
+the assertion. And `test_maze_data` (836 bytes of now-obsolete
+assembled-in test maze bytes) came out of the program entirely once
+nothing referenced it anymore, shrinking `maze.prg` from 2539 to 1808
+bytes as a direct, visible result of the format switch actually
+working.
+
+## Fixed: `maze.asm` leaving stray characters in the maze's own margin
+
+Reported directly from real hardware, with a screenshot: after
+fixing the "SCORE"/"RBNQD" bug, a second, different artifact
+remained -- letter and digit shapes stacked vertically in the
+single-column margin left of the maze. Static from the very first
+frame, present before any key was pressed, and unchanged for the
+entire time the game was played.
+
+That description -- fixed, present from startup, never changing --
+pointed away from anything the running game loop does (already
+checked at length: an extended, naturalistic simulation moving the
+player through dozens of tiles and eating many dots found nothing
+wrong anywhere on screen) and toward something the game simply never
+touches in the first place. `maze.asm` never explicitly cleared the
+screen at startup -- `render_maze` and `render_score` only ever write
+to the specific cells they actually care about (the maze's own
+bounds, and the HUD row), leaving every other screen position exactly
+as it already was. On real hardware, "already was" means whatever
+was on screen from actually typing `LOAD"MAZE",8` and `RUN` at a BASIC
+prompt to start the program -- residual command text, left showing in
+any cell this program's own code was never going to overwrite, like
+the margin column. Fixed with a straightforward, direct clear of the
+whole screen (4 pages of 256 bytes, covering all 1000 screen cells
+and a few bytes past them harmlessly) as the very first thing `start:`
+does, before anything else runs.
+
+Worth naming why this one specific bug was invisible to every test
+run against it before a real screenshot showed up: `mini6502.py`
+always starts a test from an already-blank screen, the same way a
+freshly reset emulator or a from-scratch test harness naturally would
+-- there's never anything already on screen for a missing screen-clear
+to fail to remove. The new regression test guarding against this
+seeds the screen with realistic pseudo-random "residual" content
+first, matching what a real BASIC prompt leaves, specifically so a
+future regression here would actually be caught rather than silently
+passing against a screen that was already blank to begin with.
+
+The fix itself needed one correction along the way, caught by this
+project's own test suite immediately rather than shipped: the first
+version cleared the screen to the standard PETSCII space code ($20)
+rather than `TILE_EMPTY` (0) -- but this program's own custom
+character set only has bitmaps defined for codes 0-18. Character code
+$20 has no defined bitmap here at all, so that first version would
+have replaced one flavor of undefined-character-memory garbage with
+another, not actually fixed anything. Caught because the existing
+"nothing rendered below the maze" test checks for `TILE_EMPTY`
+specifically, not blankness in general -- fixed to use the actual,
+correctly-defined blank tile instead.
+
+## Fixed: `maze.asm`'s score HUD reading "RBNQD" instead of "SCORE"
+
+Reported directly after playing it: the score counted up correctly,
+but the label above it read "RBNQD," and some garbled-looking
+characters showed up in the maze's own left margin.
+
+The label bug had an exact, findable cause: `init_text_characters`
+computed each letter's own character-ROM source address from its
+alphabet position directly -- A=0, B=1, C=2, and so on -- but that's
+wrong. Screen code 0 is `@`, not `A`; the letters actually start at 1.
+Confirmed against multiple independent sources (a directly labeled
+byte dump of the character ROM, and an explicit statement from a C64
+technical forum, not just one) before touching anything, given how
+wrong a plausible-looking but incorrect assumption here already
+proved to be. Every one of the five borrowed letters was reading from
+exactly one screen code too low as a direct result -- S from R's own
+slot, C from B's, and so on -- which is exactly "RBNQD": each letter
+individually correct, just one position off. Digits were never
+affected -- PETSCII 48-57 (`0`-`9`) maps to screen code unchanged,
+a different rule for a different block of the character set,
+confirmed separately rather than assumed safe by association with the
+letter bug.
+
+The most direct verification available for this class of bug: a new
+test pokes the character ROM's own real, correct glyph bytes for S,
+C, O, R, and E (not synthetic test patterns) and confirms the copied
+result is the exact, correct letter shape -- not just that bytes
+moved somewhere, but that they spell what they're supposed to. Two
+addresses among the five needed excluding from that check for a
+reason worth naming again: `mini6502.py` doesn't model CHAREN/`$01`
+banking at all, so `$D012` and `$D018` (`VIC_RASTER` and
+`VIC_MEMPTRS`) are always treated as their own VIC-II registers
+regardless of this program's own CHAREN bit, and get overwritten by
+this same program's own later setup code before the test can read
+them back. Verified those two directly against the assembled listing
+instead, the same approach this project's own earlier work on this
+routine already established.
+
+The left-margin report couldn't be reproduced in simulation: a full
+sweep of the maze's own left margin column and the entire HUD row,
+checked directly against every value actually expected there, found
+nothing wrong in either place. Given how precisely the letter bug
+matched what was described, and that nothing else turned up despite
+looking specifically for it, the most likely explanation is that both
+reports describe the same underlying mistake, now fixed -- worth
+confirming on real hardware or in VICE now that this fix is in place,
+since that's the one thing simulation alone couldn't settle either way
+here.
+
+## `maze.asm`: stage 3 (dot collection and scoring)
+
+The first stage to give this game an actual objective: eating a dot
+or power pellet clears it (in both `MAZE_GRID` and on screen) and adds
+to a real, displayed score -- 10 points for a dot, 50 for a pellet,
+shown as 5 decimal digits at the top of the screen, the row stage 1
+reserved for exactly this from the start.
+
+Displaying that score turned out to be the larger part of this stage,
+and a genuinely new technique for this project: this program's own
+custom character set (stage 1's own reason for existing) has nothing
+in it but the four tile graphics, since redefining `VIC_MEMPTRS` means
+the KERNAL's own font isn't visible to the VIC-II at any character
+code anymore, not just the ones this program happens to reuse.
+`init_text_characters` borrows digit and letter glyphs from the
+character ROM at startup instead -- the standard technique of clearing
+CHAREN (bit 2 of `$01`) to expose the ROM to the CPU at `$D000-$DFFF`
+in place of I/O, copying what's needed, and restoring it -- confirmed
+against several independent sources first, given how significant
+getting this specific register wrong would be. Interrupts are disabled
+for the whole copy window, not as a general precaution but because the
+KERNAL's own IRQ handler (firing roughly 60 times a second for the
+jiffy clock and keyboard scan) lives in exactly the memory this
+temporarily replaces, and would crash or misbehave if it fired
+mid-copy.
+
+Verifying this leaned on a mix of static and dynamic checks, worth
+naming since it's a new pattern: `mini6502.py` doesn't model `$01`/
+CHAREN banking at all, so it always treats specific addresses within
+`$D000-$DFFF` (`VIC_RASTER`, `VIC_BORDER`, `VIC_BG0`) as their own
+VIC-II registers regardless of what this program's own CHAREN bit
+says -- three of the fifteen glyphs this stage borrows happen to have
+ROM source bytes at exactly those addresses, and can't be verified by
+poking a test pattern and reading it back the way the other twelve
+can. Verified those three directly against the assembled listing
+instead, confirming the exact source and destination address in the
+actual machine code, and confirmed the source/destination split
+between the two check styles was based on how the code is genuinely
+structured (digits 0-9 copy as a single contiguous 80-byte run, not
+ten separate instructions -- an early version of this same listing
+check wrongly assumed otherwise, checking for ten addresses that were
+never going to individually appear).
+
+Two correct, existing tests needed real updates, not workarounds:
+adding a fourth call (`check_eat_dot`) to `main_loop`'s own per-frame
+work meant a couple of stage-2 tests that poked player state
+immediately after a fixed instruction budget could now land mid-
+iteration, since each iteration takes measurably longer than before --
+fixed by explicitly stepping to a clean loop boundary before poking,
+not just sampling afterward. And two stage-1 tests needed to account
+for a real, correct consequence of this stage's own new behavior: the
+player's own start tile is itself a dot, and it's eaten within the
+first loop iteration -- not left as a kind of implicit safe zone.
+
+## Fixed: `maze.asm`'s player hit-box visibly shifted right and down
+
+Reported directly after playing it: the player appeared to hit the
+left and top walls with a visible gap still showing, while appearing
+to overlap into the right and bottom walls (and into the maze's own
+internal wall blocks) before actually stopping.
+
+The collision system itself was never wrong -- `can_move_direction`
+and `update_sprite_position` both correctly used the sprite's own real
+(X,Y) coordinate the whole time. What was wrong was the player sprite
+itself: its visible shape (a small circle, added specifically to fix
+an earlier, different sizing problem) was centered in the middle of
+the sprite's full 24x21 pixel canvas, rather than anchored at the
+sprite's own (0,0) origin -- the same origin every collision check and
+position update actually uses. Computed directly, not assumed: the
+earlier bitmap's own visible pixels sat 6-7 pixels away from that
+origin, on an 8x8 tile -- most of a whole tile's worth of visual
+offset between where the collision boundary actually was and where
+the circle appeared to be. Redrawn so the visible shape's own bounding
+box starts exactly at (0,0), the same coordinate the rest of the game
+already treats as "the player."
+
+A new, permanent regression test computes the visible sprite's own
+bounding box directly from its bitmap data and checks it starts at
+(0,0) and stays within one tile's own bounds -- confirmed this
+actually catches the class of bug it's meant to by running it against
+the previous, unfixed bitmap first (it fails, reporting the same
+(6,5) offset computed above) before confirming it passes against the
+fix.
+
+## `maze.asm`: the maze now fills nearly the whole screen
+
+More direct feedback after trying the previous, already-larger maze:
+even at 28x20 tiles, it still only covered about three-quarters of the
+screen. That size wasn't arbitrary -- it was deliberately capped
+specifically to keep the player's own absolute sprite X under 256, to
+avoid a real second piece of work (`SPRITE_X_MSB` handling) that a
+wider maze would require. This entry is that piece of work, done
+properly rather than avoided: the maze grew to 38x22 tiles (1-column
+margins on each side, using the full 40-column width exactly), and the
+player's own X position became a genuine 16-bit value with real
+`SPRITE_X_MSB` handling -- the same technique `bounce.asm`'s own wider
+bounce area already uses -- since the maze's own width alone now
+means the player's maximum possible absolute sprite X reaches 335.
+
+This touched most of the player's own movement code, not just the
+final sprite-position write: `update_player`'s tile-alignment check
+(only the low byte's own low 3 bits ever mattered, unaffected by
+adding a second byte), `can_move_direction`'s tile-column computation
+(a genuine 16-bit-to-8-bit right shift on a scratch copy, not the
+player's own actual position), the movement step itself (16-bit
+increment/decrement with correct carry/borrow into the high byte), and
+`update_sprite_position` (a genuine 16-bit addition, splitting the
+result into `SPRITE0_X`'s own low byte and whichever single bit of
+`SPRITE_X_MSB` belongs to sprite 0, without disturbing the other 7
+sprites' own MSB bits sharing that same register). `compute_row_offset`
+also needed a new decomposition for the new `TILE_COLS` (32+4+2 rather
+than the previous maze's own 16+8+4).
+
+Caught one real mistake before it ever reached testing, not after:
+an early version of the MSB-clearing code used `and #(~PLAYER_SPRITE_
+X_MSB_BIT) & $ff`, assuming bitwise NOT was available -- checked
+`c64asm-reference.md`'s own expression table first, rather than
+assuming, and confirmed this assembler has no bitwise operators at all
+(only `+ - * /` and unary `< >`). Fixed with a plain, hardcoded
+inverted mask before ever trying to assemble it.
+
+Verifying the MSB crossing specifically needed one more new pattern
+worth naming: sampling `SPRITE0_X`/`SPRITE_X_MSB` at a fixed
+instruction-count interval (an earlier version of this same test) can
+land mid-iteration, in between `update_player` moving the player's own
+position and `update_sprite_position` catching up to that same new
+value within the same loop pass -- producing several small, confusing,
+entirely spurious mismatches that had nothing to do with the actual
+code. Fixed by sampling only when the program counter returns to
+`main_loop`'s own address (extracted from the assembled listing, not
+hardcoded), the one point in the whole loop guaranteed to sit strictly
+between iterations with both routines already finished.
+
+## `maze.asm`: a bigger maze, and a player sprite actually sized to fit it
+
+Prompted by direct feedback after trying the game: the 20x10 test maze
+only filled a small corner of the screen, and the player sprite --
+drawn edge-to-edge across its own full 24x21 pixel canvas -- was
+roughly three tiles wide next to the 8x8 corridors it was actually
+navigating. Neither had been deliberately tuned; both were simply
+whatever stage 1 and 2 shipped with first.
+
+The maze grew to 28x20 tiles (up from 20x10, roughly 3.7x the area),
+sized specifically to stay just under the sprite-X=256 threshold --
+checked precisely before picking dimensions, not guessed at -- so the
+player never needs the second, high-bit X handling `bounce.asm`'s own
+wider bounce area does (`SPRITE_X_MSB`). That constraint pushed the
+maze's own left margin to a single column rather than centering it
+symmetrically; the resulting free space on the right is a reasonable
+place for a HUD (score/lives) a later stage could add. The player
+sprite itself is now drawn as a much smaller shape (~12 pixels across)
+well inside its own 24x21 canvas, rather than filling it -- reading as
+roughly proportionate to one tile instead of three.
+
+Growing the maze surfaced two real bugs, both caught by actually
+running the result rather than trusting "assembles cleanly":
+
+- `init_maze_grid`'s own copy loop used an 8-bit `X` register to count
+  up to `TILE_COLS*TILE_ROWS` (560 bytes for this maze). An 8-bit
+  counter can't reach 560 -- and doesn't fail loudly when asked to:
+  `cpx` against a value above 255 simply never matches, so `X` wrapped
+  through 0-255 repeatedly instead of ever completing, silently
+  leaving everything past roughly the first 255 bytes of `MAZE_GRID`
+  as whatever RAM already held. Fixed with a proper pointer-based copy
+  and a genuine 16-bit byte counter.
+- `get_tile`'s own address computation (`MAZE_GRID + row*TILE_COLS +
+  col`) needed the same fix for the same reason: `row*TILE_COLS`
+  reaches 532 at the maze's own last row, which doesn't fit in a
+  single byte the smaller 20x10 maze's own addressing scheme relied
+  on. Rewritten with a genuine 16-bit multiply (`compute_row_offset`,
+  the same kind of bit-shift decomposition this project's other
+  16-bit-offset routines already use) and a 16-bit pointer, rather
+  than an 8-bit index into `MAZE_GRID`.
+
+Verifying the new layout leaned on two things worth naming since
+they're new patterns for this project: the maze's own connectivity
+(every open tile reachable from every other) was checked by flood fill
+*before* ever assembling it, not discovered by playing it -- a maze
+generation bug that isolated one region from another would otherwise
+be the kind of thing that's a lot more annoying to notice by hand.
+And rather than hand-transcribing expected collision-stop coordinates
+into the test suite, `test_maze.py` now regenerates the exact same
+reference layout `maze.asm`'s own test data comes from and computes
+where the player should stop moving directly from that reference,
+independent of the game's own logic -- catching two real test-design
+mistakes of exactly the kind that discipline is meant to prevent (see
+below).
+
+Two mistakes came from the test suite itself, not the game, both worth
+naming plainly rather than glossing over: an early version of a
+`run_fixed_budget` test helper set `joystick2 = 0` unconditionally
+inside itself "for safety," which silently overwrote a value a test
+had deliberately set immediately beforehand, wanting it to apply for
+the whole run -- several tests briefly, incorrectly appeared to show
+the player not moving at all as a result. And one test's own
+assumption that "left" would be open from the player's start tile was
+simply wrong -- that tile sits flush against a wall block's own right
+edge -- caught by the reference-grid check above rather than shipped
+as a false failure or, worse, quietly weakened to pass.
+
+## `maze.asm`: WASD keyboard movement, alongside the joystick
+
+Added so this game is playable without a physical joystick attached
+(a real limitation of testing in VICE or on hardware without one, not
+just a convenience) -- W/A/S/D via `keyboard.inc`'s own named,
+verified constants, not hand-transcribed binary literals (that file's
+own header comment documents a real bug an earlier version of this
+project once shipped from exactly that: a hand-written column/row
+pair that actually matched a different key than intended). Combined
+with the joystick via OR into the same `joy_state` bitmask the rest of
+`update_player` already works from, rather than replacing it -- either
+input method works, interchangeably, and neither can mask the other.
+Confirmed all four directions individually, that the joystick still
+works exactly as it did before this change, and that both together
+don't conflict.
+
+## `maze.asm`: stage 2 (player movement and wall collision)
+
+A real, moving player on top of stage 1's own tile rendering: a
+hardware sprite (not a character-cell player -- smooth, pixel-by-pixel
+movement independent of the tile grid underneath it, the same reason a
+later stage's enemies will also be sprites), joystick input via this
+project's own already-tested `read_joy2`, and wall collision checked
+directly against the same maze grid stage 1's own rendering already
+treats as the source of truth.
+
+Movement is continuous, not one-tile-per-keypress, with turns only
+committed when the player is exactly tile-aligned -- the classic
+arcade convention this genre is built around, deliberately including
+the part that's easy to leave out by accident: releasing the joystick
+doesn't stop the player, it keeps moving in its current direction
+until blocked by a wall, the same way the original arcade game
+actually behaves (the joystick sets the *next* direction to turn, not
+"move only while held"). The player's own position is tracked relative
+to the maze's own top-left pixel rather than the whole screen's,
+specifically so tile alignment stays a trivial low-3-bits check --
+worth calling out since the maze's own screen offset isn't itself a
+multiple of 8 on the Y axis, which would have broken a shortcut
+version of that same check.
+
+Two real bugs came up during this stage's own development, both
+caught by actually running the result rather than trusting that
+"assembles cleanly" was enough:
+
+- A genuine logic inversion in `update_player`: `can_move_direction`
+  returns with the zero flag set when a move is *blocked*, and several
+  of the branches checking that result had `bne`/`beq` backwards,
+  which meant the player could never move at all. Traced precisely
+  (inspected `player_direction` and the joystick state mid-run rather
+  than guessing) before fixing all four affected checks.
+- A bug in the test harness itself, not the game: an early version of
+  the test helper reset the whole program back to its own entry point
+  on every call, which silently discarded manual pokes a test had set
+  up for a specific scenario (a starting tile position, say) the
+  moment that same helper ran again. Fixed by separating "start fresh"
+  from "continue running" into two distinct helpers, now used
+  correctly throughout `test_maze.py`.
+
+Also worth naming since it shaped several tests along the way: this
+project's own zero-page poisoning simulation (`simulate_zp_poisoning`)
+doesn't simulate `$D012` (`VIC_RASTER`) at all -- it's ordinary memory
+that never advances on its own, so `wait_frame`'s own raster poll
+would spin forever inside `mini6502.py` unless that address is poked
+once, up front, to the value it's waiting for. With it poked,
+`wait_frame` always passes instantly, which is exactly what a test
+wants -- many game-loop iterations within a fixed instruction budget,
+not real-time throttling that has no meaning inside a CPU-only
+simulation.
+
+## `maze.asm`: a new game, stage 1 (tile rendering foundation)
+
+The start of an original maze-chase game -- not a clone of anything
+specific -- built as the next real stretch for this project now that
+disk I/O is thoroughly tested: level data loaded from disk (a planned
+later stage) is the actual point, and a tile-based maze grid is a
+genuinely natural fit for that, unlike this project's earlier games,
+whose state was never really shaped like a file. This first stage
+lays the foundation everything else sits on: a custom VIC-II character
+set for maze tiles, and a maze grid held in its own RAM (`MAZE_GRID`),
+rendered onto the screen from that grid rather than drawn once and
+left stale -- the same architectural lesson `editor.asm` already
+learned the hard way from its own screen-is-the-document history,
+applied here from the start instead of after the fact.
+
+`hardware.inc` gained two things worth calling out on their own,
+verified against multiple independent sources given how easy this
+specific register is to get wrong: `CIA2_PRA`/`CIA2_DDRA` (VIC bank
+selection), and a much fuller comment on `VIC_MEMPTRS` explaining its
+exact bit layout. The bank-select register's other 6 bits are the
+serial/IEC bus lines this project's own disk I/O depends on -- a
+careless full-byte store there doesn't just risk picking the wrong VIC
+bank, it can silently break loading a level from disk in exactly the
+later stage this whole game exists to build toward. `hardware.inc` now
+documents, and `maze.asm` uses, the careful read-modify-write pattern
+instead. Character memory lives at `$3000`, not the more obvious
+`$1000` -- VIC banks 0 and 2 both shadow that address with the
+character ROM regardless of what's actually written to the RAM there,
+a real, easy-to-lose-an-afternoon-to gotcha now spelled out directly
+in `VIC_MEMPTRS`'s own comment rather than left to be rediscovered.
+Confirmed the additions don't affect any of this project's other
+programs that already `.include` this same file -- rebuilt all twelve
+and compared byte-for-byte against what was already shipped.
+
+Verification for a VIC-II/graphics-touching program looks a little
+different from this project's other tests, worth noting since it's a
+new pattern: `mini6502.py` is a CPU-level emulator, not a visual one,
+so there's no "does it look right on screen" check available the way
+there would be in VICE. What's actually verifiable, and what
+determines correctness on real hardware regardless of whether a human
+is looking at a screen: the exact register values written to
+`CIA2_PRA`/`CIA2_DDRA`/`VIC_MEMPTRS`, the exact bitmap bytes landing in
+character memory, and the exact tile values landing in both the maze
+grid and rendered screen memory, checked row by row against the
+intended test maze -- all confirmed directly.
+
 ## `editor.asm`: row number status, and HOME/CLR page up/down
 
 Two additions, both aimed at getting around in the larger, scrollable

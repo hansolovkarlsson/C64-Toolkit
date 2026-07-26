@@ -1,0 +1,1693 @@
+; c64asm listing  (origin $0801, 3108 bytes)
+; CYCLES column: a plain number is a fixed cycle count; "b/b+1" means b cycles, +1 more if this instruction's indexed addressing crosses a page boundary; "2/3/4" means a branch's usual 2 (not taken) / 3 (taken) / 4 (taken, crossing a page). Blank means an illegal/undocumented opcode (.cpu 6510x) -- see c64asm-reference.md "Listing file format".
+
+ADDR  BYTES      CYCLES  SOURCE
+080D  4C CA 08   3               .basic start
+0810  A9 00      2               lda #%00000000
+0812  8D 02 DC   4               sta CIA1_DDRA
+0815  AD 00 DC   4               lda CIA1_PRA
+0818  49 FF      2               eor #$ff
+081A  60         6               rts
+0843  A2 00      2               ldx #$00
+0845  20 CF FF   6               jsr CHRIN
+0848  C9 0D      2               cmp #$0d
+084A  F0 08      2/3/4           beq __local3_done
+084C  9D 1B 08   5               sta input_buf,x
+084F  E8         2               inx
+0850  E0 27      2               cpx #MAX_INPUT_LEN-1
+0852  D0 F1      2/3/4           bne __local3_loop
+0854  A9 00      2               lda #$00
+0856  9D 1B 08   5               sta input_buf,x
+0859  60         6               rts
+085A  85 04      3               sta word_dest_ptr
+085C  84 05      3               sty word_dest_ptr+1
+085E  BD 1B 08   4/5             lda input_buf,x
+0861  C9 20      2               cmp #$20
+0863  D0 04      2/3/4           bne __local4_start
+0865  E8         2               inx
+0866  4C 5E 08   3               jmp __local4_skip_spaces
+0869  A0 00      2               ldy #$00
+086B  BD 1B 08   4/5             lda input_buf,x
+086E  F0 0F      2/3/4           beq __local4_end
+0870  C9 20      2               cmp #$20
+0872  F0 0A      2/3/4           beq __local4_space
+0874  91 04      6               sta (word_dest_ptr),y
+0876  E8         2               inx
+0877  C8         2               iny
+0878  C0 0E      2               cpy #MAX_WORD_LEN-1
+087A  D0 EF      2/3/4           bne __local4_loop
+087C  F0 01      2/3/4           beq __local4_terminate
+087E  E8         2               inx
+087F  A9 00      2               lda #$00
+0881  91 04      6               sta (word_dest_ptr),y
+0883  60         6               rts
+088C  A2 00      2               ldx #$00
+088E  78         2               sei
+088F  A9 FF      2               lda #%11111111
+0891  8D 02 DC   4               sta CIA1_DDRA
+0894  BD 84 08   4/5             lda key_col_table,x
+0897  8D 00 DC   4               sta CIA1_PRA
+089A  AD 01 DC   4               lda CIA1_PRB
+089D  58         2               cli
+089E  49 FF      2               eor #$ff             ; active-HIGH: bit=1 means that key is held
+08A0  F0 09      2/3/4           beq __local6_next_col
+08A2  A0 00      2               ldy #$00
+08A4  4A         2               lsr a
+08A5  B0 0E      2/3/4           bcs __local6_found
+08A7  C8         2               iny
+08A8  4C A4 08   3               jmp __local6_row_loop
+08AB  E8         2               inx
+08AC  E0 08      2               cpx #$08
+08AE  D0 DE      2/3/4           bne __local6_col_loop
+08B0  A2 00      2               ldx #$00
+08B2  4C 8E 08   3               jmp __local6_col_loop
+08B5  8A         2               txa
+08B6  0A         2               asl a
+08B7  0A         2               asl a
+08B8  0A         2               asl a                 ; A = column_index * 8
+08B9  85 04      3               sta key_scratch
+08BB  98         2               tya
+08BC  18         2               clc
+08BD  65 04      3               adc key_scratch        ; A = column_index*8 + row_index
+08BF  60         6               rts
+08CA  A9 00      2               lda #TILE_EMPTY
+08CC  A2 00      2               ldx #$00
+08CE  9D 00 04   5               sta SCREEN,x
+08D1  9D 00 05   5               sta SCREEN+256,x
+08D4  9D 00 06   5               sta SCREEN+512,x
+08D7  9D 00 07   5               sta SCREEN+768,x
+08DA  E8         2               inx
+08DB  D0 F1      2/3/4           bne __local8_clear_screen_loop
+08DD  AD 02 DD   4               lda CIA2_DDRA
+08E0  09 03      2               ora #%00000011
+08E2  8D 02 DD   4               sta CIA2_DDRA
+08E5  AD 00 DD   4               lda CIA2_PRA
+08E8  29 FC      2               and #%11111100
+08EA  09 03      2               ora #VIC_BANK_0
+08EC  8D 00 DD   4               sta CIA2_PRA
+08EF  A9 1C      2               lda #%00011100          ; screen $0400 (bits 7-4 = 1), char
+08F1  8D 18 D0   4               sta VIC_MEMPTRS            ; memory $3000 (bits 3-1 = 6)
+08F4  A9 00      2               lda #$00                  ; black background and border --
+08F6  8D 20 D0   4               sta VIC_BORDER               ; makes the tile graphics the only
+08F9  8D 21 D0   4               sta VIC_BG0                    ; thing with any brightness to it
+08FC  20 C1 12   6               jsr init_tile_characters
+08FF  20 CF 12   6               jsr init_text_characters
+0902  20 2C 13   6               jsr load_level
+0905  20 C8 13   6               jsr render_maze
+0908  20 31 09   6               jsr init_sprite
+090B  20 7C 09   6               jsr init_enemies
+090E  A9 00      2               lda #$00
+0910  8D 50 03   4               sta score_lo
+0913  8D 51 03   4               sta score_hi
+0916  20 FA 0C   6               jsr render_score
+0919  20 37 0A   6               jsr wait_frame
+091C  20 E7 10   6               jsr update_player
+091F  20 0D 12   6               jsr update_sprite_position
+0922  20 4A 0B   6               jsr check_eat_dot
+0925  20 A8 0F   6               jsr update_enemies
+0928  20 07 0C   6               jsr update_vulnerability_timer
+092B  20 B5 10   6               jsr check_enemy_collision
+092E  4C 19 09   3               jmp main_loop
+0931  A2 00      2               ldx #$00
+0933  BD 43 12   4/5             lda player_sprite_data,x
+0936  9D 80 3B   5               sta SPRITE_DATA,x
+0939  E8         2               inx
+093A  E0 3F      2               cpx #63
+093C  D0 F5      2/3/4           bne __local10_copy_loop
+093E  A9 EE      2               lda #(SPRITE_DATA / 64)
+0940  8D F8 07   4               sta SPRITE_PTR0
+0943  A9 01      2               lda #$01                  ; white
+0945  8D 27 D0   4               sta SPRITE0_COLOR
+0948  A9 01      2               lda #%00000001
+094A  8D 15 D0   4               sta SPRITE_ENABLE
+094D  AD 5A 03   4               lda player_start_col
+0950  8D 3C 03   4               sta player_rel_x_lo
+0953  A9 00      2               lda #$00
+0955  8D 3D 03   4               sta player_rel_x_hi
+0958  0E 3C 03   6               asl player_rel_x_lo
+095B  2E 3D 03   6               rol player_rel_x_hi
+095E  0E 3C 03   6               asl player_rel_x_lo
+0961  2E 3D 03   6               rol player_rel_x_hi
+0964  0E 3C 03   6               asl player_rel_x_lo
+0967  2E 3D 03   6               rol player_rel_x_hi
+096A  AD 5B 03   4               lda player_start_row
+096D  0A         2               asl a
+096E  0A         2               asl a
+096F  0A         2               asl a
+0970  8D 3E 03   4               sta player_rel_y
+0973  A9 00      2               lda #$00
+0975  8D 3F 03   4               sta player_direction
+0978  20 0D 12   6               jsr update_sprite_position
+097B  60         6               rts
+097C  A2 00      2               ldx #$00
+097E  BD 82 12   4/5             lda enemy_sprite_data,x
+0981  9D C0 3B   5               sta SPRITE_DATA + 64,x
+0984  BD 82 12   4/5             lda enemy_sprite_data,x
+0987  9D 00 3C   5               sta SPRITE_DATA + 128,x
+098A  E8         2               inx
+098B  E0 3F      2               cpx #63
+098D  D0 EF      2/3/4           bne __local11_copy_loop
+098F  A9 EF      2               lda #((SPRITE_DATA + 64) / 64)
+0991  8D F9 07   4               sta SPRITE_PTR1
+0994  A9 F0      2               lda #((SPRITE_DATA + 128) / 64)
+0996  8D FA 07   4               sta SPRITE_PTR2
+0999  A9 02      2               lda #ENEMY1_COLOR
+099B  8D 28 D0   4               sta SPRITE1_COLOR
+099E  A9 04      2               lda #ENEMY2_COLOR
+09A0  8D 29 D0   4               sta SPRITE2_COLOR
+09A3  AD 15 D0   4               lda SPRITE_ENABLE
+09A6  09 06      2               ora #%00000110             ; sprites 1 and 2, alongside
+09A8  8D 15 D0   4               sta SPRITE_ENABLE            ; whatever sprite 0's own bit
+09AB  A9 00      2               lda #$00
+09AD  8D 85 03   4               sta pellet_vulnerable_timer_lo
+09B0  8D 86 03   4               sta pellet_vulnerable_timer_hi
+09B3  A9 01      2               lda #1
+09B5  8D 7C 03   4               sta enemy_sprite_num
+09B8  20 06 0A   6               jsr reset_enemy_to_start
+09BB  20 62 0F   6               jsr update_enemy_sprite_position
+09BE  AD 78 03   4               lda enemy_rel_x_lo
+09C1  8D 70 03   4               sta enemy1_rel_x_lo
+09C4  AD 79 03   4               lda enemy_rel_x_hi
+09C7  8D 71 03   4               sta enemy1_rel_x_hi
+09CA  AD 7A 03   4               lda enemy_rel_y
+09CD  8D 72 03   4               sta enemy1_rel_y
+09D0  AD 7B 03   4               lda enemy_direction
+09D3  8D 73 03   4               sta enemy1_direction
+09D6  AD 89 03   4               lda enemy_frightened
+09D9  8D 87 03   4               sta enemy1_frightened
+09DC  A9 02      2               lda #2
+09DE  8D 7C 03   4               sta enemy_sprite_num
+09E1  20 06 0A   6               jsr reset_enemy_to_start
+09E4  20 62 0F   6               jsr update_enemy_sprite_position
+09E7  AD 78 03   4               lda enemy_rel_x_lo
+09EA  8D 74 03   4               sta enemy2_rel_x_lo
+09ED  AD 79 03   4               lda enemy_rel_x_hi
+09F0  8D 75 03   4               sta enemy2_rel_x_hi
+09F3  AD 7A 03   4               lda enemy_rel_y
+09F6  8D 76 03   4               sta enemy2_rel_y
+09F9  AD 7B 03   4               lda enemy_direction
+09FC  8D 77 03   4               sta enemy2_direction
+09FF  AD 89 03   4               lda enemy_frightened
+0A02  8D 88 03   4               sta enemy2_frightened
+0A05  60         6               rts
+0A06  AD 7C 03   4               lda enemy_sprite_num
+0A09  C9 01      2               cmp #1
+0A0B  D0 12      2/3/4           bne __local12_enemy2
+0A0D  A9 28      2               lda #<(ENEMY1_START_COL * 8)
+0A0F  8D 78 03   4               sta enemy_rel_x_lo
+0A12  A9 00      2               lda #>(ENEMY1_START_COL * 8)
+0A14  8D 79 03   4               sta enemy_rel_x_hi
+0A17  A9 08      2               lda #(ENEMY1_START_ROW * 8)
+0A19  8D 7A 03   4               sta enemy_rel_y
+0A1C  4C 2E 0A   3               jmp __local12_done
+0A1F  A9 00      2               lda #<(ENEMY2_START_COL * 8)
+0A21  8D 78 03   4               sta enemy_rel_x_lo
+0A24  A9 01      2               lda #>(ENEMY2_START_COL * 8)
+0A26  8D 79 03   4               sta enemy_rel_x_hi
+0A29  A9 08      2               lda #(ENEMY2_START_ROW * 8)
+0A2B  8D 7A 03   4               sta enemy_rel_y
+0A2E  A9 00      2               lda #$00
+0A30  8D 7B 03   4               sta enemy_direction
+0A33  8D 89 03   4               sta enemy_frightened
+0A36  60         6               rts
+0A37  AD 12 D0   4               lda VIC_RASTER
+0A3A  C9 FB      2               cmp #$fb
+0A3C  D0 F9      2/3/4           bne wait_frame
+0A3E  60         6               rts
+0A3F  AD 41 03   4               lda tile_col
+0A42  C9 26      2               cmp #TILE_COLS
+0A44  B0 2F      2/3/4           bcs __local14_out_of_bounds
+0A46  AD 42 03   4               lda tile_row
+0A49  C9 16      2               cmp #TILE_ROWS
+0A4B  B0 28      2/3/4           bcs __local14_out_of_bounds
+0A4D  AD 42 03   4               lda tile_row
+0A50  20 78 0A   6               jsr compute_row_offset      ; row_offset_lo/hi := tile_row * TILE_COLS
+0A53  AD 48 03   4               lda row_offset_lo
+0A56  18         2               clc
+0A57  6D 41 03   4               adc tile_col
+0A5A  85 04      3               sta grid_ptr
+0A5C  AD 49 03   4               lda row_offset_hi
+0A5F  69 00      2               adc #$00
+0A61  85 05      3               sta grid_ptr+1
+0A63  A5 04      3               lda grid_ptr
+0A65  18         2               clc
+0A66  69 00      2               adc #<MAZE_GRID
+0A68  85 04      3               sta grid_ptr
+0A6A  A5 05      3               lda grid_ptr+1
+0A6C  69 38      2               adc #>MAZE_GRID
+0A6E  85 05      3               sta grid_ptr+1
+0A70  A0 00      2               ldy #$00
+0A72  B1 04      5/6             lda (grid_ptr),y
+0A74  60         6               rts
+0A75  A9 01      2               lda #TILE_WALL
+0A77  60         6               rts
+0A78  8D 48 03   4               sta row_offset_lo
+0A7B  A9 00      2               lda #$00
+0A7D  8D 49 03   4               sta row_offset_hi
+0A80  0E 48 03   6               asl row_offset_lo            ; *2
+0A83  2E 49 03   6               rol row_offset_hi
+0A86  AD 48 03   4               lda row_offset_lo
+0A89  8D 4A 03   4               sta row_times2_lo
+0A8C  AD 49 03   4               lda row_offset_hi
+0A8F  8D 4B 03   4               sta row_times2_hi
+0A92  0E 48 03   6               asl row_offset_lo            ; *4
+0A95  2E 49 03   6               rol row_offset_hi
+0A98  AD 48 03   4               lda row_offset_lo
+0A9B  8D 4C 03   4               sta row_times4_lo
+0A9E  AD 49 03   4               lda row_offset_hi
+0AA1  8D 4D 03   4               sta row_times4_hi
+0AA4  0E 48 03   6               asl row_offset_lo            ; *8
+0AA7  2E 49 03   6               rol row_offset_hi
+0AAA  0E 48 03   6               asl row_offset_lo            ; *16
+0AAD  2E 49 03   6               rol row_offset_hi
+0AB0  0E 48 03   6               asl row_offset_lo            ; *32
+0AB3  2E 49 03   6               rol row_offset_hi
+0AB6  AD 48 03   4               lda row_offset_lo
+0AB9  18         2               clc
+0ABA  6D 4C 03   4               adc row_times4_lo
+0ABD  8D 48 03   4               sta row_offset_lo
+0AC0  AD 49 03   4               lda row_offset_hi
+0AC3  6D 4D 03   4               adc row_times4_hi
+0AC6  8D 49 03   4               sta row_offset_hi
+0AC9  AD 48 03   4               lda row_offset_lo
+0ACC  18         2               clc
+0ACD  6D 4A 03   4               adc row_times2_lo
+0AD0  8D 48 03   4               sta row_offset_lo
+0AD3  AD 49 03   4               lda row_offset_hi
+0AD6  6D 4B 03   4               adc row_times2_hi
+0AD9  8D 49 03   4               sta row_offset_hi
+0ADC  60         6               rts
+0ADD  8D 56 03   4               sta screen_row_offset_lo
+0AE0  A9 00      2               lda #$00
+0AE2  8D 57 03   4               sta screen_row_offset_hi
+0AE5  0E 56 03   6               asl screen_row_offset_lo     ; *2
+0AE8  2E 57 03   6               rol screen_row_offset_hi
+0AEB  0E 56 03   6               asl screen_row_offset_lo     ; *4
+0AEE  2E 57 03   6               rol screen_row_offset_hi
+0AF1  0E 56 03   6               asl screen_row_offset_lo     ; *8
+0AF4  2E 57 03   6               rol screen_row_offset_hi
+0AF7  AD 56 03   4               lda screen_row_offset_lo
+0AFA  8D 58 03   4               sta screen_row_times8_lo
+0AFD  AD 57 03   4               lda screen_row_offset_hi
+0B00  8D 59 03   4               sta screen_row_times8_hi
+0B03  0E 56 03   6               asl screen_row_offset_lo     ; *16
+0B06  2E 57 03   6               rol screen_row_offset_hi
+0B09  0E 56 03   6               asl screen_row_offset_lo     ; *32
+0B0C  2E 57 03   6               rol screen_row_offset_hi
+0B0F  AD 56 03   4               lda screen_row_offset_lo
+0B12  18         2               clc
+0B13  6D 58 03   4               adc screen_row_times8_lo
+0B16  8D 56 03   4               sta screen_row_offset_lo
+0B19  AD 57 03   4               lda screen_row_offset_hi
+0B1C  6D 59 03   4               adc screen_row_times8_hi
+0B1F  8D 57 03   4               sta screen_row_offset_hi
+0B22  60         6               rts
+0B23  AD 42 03   4               lda tile_row
+0B26  18         2               clc
+0B27  69 01      2               adc #MAZE_SCREEN_ROW
+0B29  20 DD 0A   6               jsr compute_screen_row_offset
+0B2C  AD 56 03   4               lda screen_row_offset_lo
+0B2F  18         2               clc
+0B30  6D 41 03   4               adc tile_col
+0B33  85 02      3               sta screen_ptr
+0B35  AD 57 03   4               lda screen_row_offset_hi
+0B38  69 00      2               adc #$00
+0B3A  85 03      3               sta screen_ptr+1
+0B3C  A5 02      3               lda screen_ptr
+0B3E  18         2               clc
+0B3F  69 01      2               adc #<(SCREEN + MAZE_SCREEN_COL)
+0B41  85 02      3               sta screen_ptr
+0B43  A5 03      3               lda screen_ptr+1
+0B45  69 04      2               adc #>(SCREEN + MAZE_SCREEN_COL)
+0B47  85 03      3               sta screen_ptr+1
+0B49  60         6               rts
+0B4A  AD 3C 03   4               lda player_rel_x_lo
+0B4D  8D 44 03   4               sta x_shift_lo
+0B50  AD 3D 03   4               lda player_rel_x_hi
+0B53  8D 45 03   4               sta x_shift_hi
+0B56  4E 45 03   6               lsr x_shift_hi
+0B59  6E 44 03   6               ror x_shift_lo
+0B5C  4E 45 03   6               lsr x_shift_hi
+0B5F  6E 44 03   6               ror x_shift_lo
+0B62  4E 45 03   6               lsr x_shift_hi
+0B65  6E 44 03   6               ror x_shift_lo
+0B68  AD 44 03   4               lda x_shift_lo
+0B6B  8D 41 03   4               sta tile_col
+0B6E  AD 3E 03   4               lda player_rel_y
+0B71  4A         2               lsr a
+0B72  4A         2               lsr a
+0B73  4A         2               lsr a
+0B74  8D 42 03   4               sta tile_row
+0B77  20 3F 0A   6               jsr get_tile
+0B7A  C9 02      2               cmp #TILE_DOT
+0B7C  F0 05      2/3/4           beq __local18_eat_dot
+0B7E  C9 03      2               cmp #TILE_PELLET
+0B80  F0 17      2/3/4           beq __local18_eat_pellet
+0B82  60         6               rts
+0B83  A9 00      2               lda #TILE_EMPTY
+0B85  A0 00      2               ldy #$00
+0B87  91 04      6               sta (grid_ptr),y         ; grid_ptr still points at this exact
+0B89  20 23 0B   6               jsr compute_tile_screen_addr
+0B8C  A9 00      2               lda #TILE_EMPTY
+0B8E  A0 00      2               ldy #$00
+0B90  91 02      6               sta (screen_ptr),y
+0B92  20 B2 0B   6               jsr add_dot_score
+0B95  20 FA 0C   6               jsr render_score
+0B98  60         6               rts
+0B99  A9 00      2               lda #TILE_EMPTY
+0B9B  A0 00      2               ldy #$00
+0B9D  91 04      6               sta (grid_ptr),y
+0B9F  20 23 0B   6               jsr compute_tile_screen_addr
+0BA2  A9 00      2               lda #TILE_EMPTY
+0BA4  A0 00      2               ldy #$00
+0BA6  91 02      6               sta (screen_ptr),y
+0BA8  20 C4 0B   6               jsr add_pellet_score
+0BAB  20 FA 0C   6               jsr render_score
+0BAE  20 E8 0B   6               jsr activate_pellet_effect
+0BB1  60         6               rts
+0BB2  AD 50 03   4               lda score_lo
+0BB5  18         2               clc
+0BB6  69 0A      2               adc #10
+0BB8  8D 50 03   4               sta score_lo
+0BBB  AD 51 03   4               lda score_hi
+0BBE  69 00      2               adc #$00
+0BC0  8D 51 03   4               sta score_hi
+0BC3  60         6               rts
+0BC4  AD 50 03   4               lda score_lo
+0BC7  18         2               clc
+0BC8  69 32      2               adc #50
+0BCA  8D 50 03   4               sta score_lo
+0BCD  AD 51 03   4               lda score_hi
+0BD0  69 00      2               adc #$00
+0BD2  8D 51 03   4               sta score_hi
+0BD5  60         6               rts
+0BD6  AD 50 03   4               lda score_lo
+0BD9  18         2               clc
+0BDA  69 C8      2               adc #ENEMY_EATEN_SCORE
+0BDC  8D 50 03   4               sta score_lo
+0BDF  AD 51 03   4               lda score_hi
+0BE2  69 00      2               adc #$00
+0BE4  8D 51 03   4               sta score_hi
+0BE7  60         6               rts
+0BE8  20 EC 0B   6               jsr start_enemy_vulnerability
+0BEB  60         6               rts
+0BEC  A9 90      2               lda #<PELLET_VULNERABLE_DURATION
+0BEE  8D 85 03   4               sta pellet_vulnerable_timer_lo
+0BF1  A9 01      2               lda #>PELLET_VULNERABLE_DURATION
+0BF3  8D 86 03   4               sta pellet_vulnerable_timer_hi
+0BF6  A9 01      2               lda #$01
+0BF8  8D 87 03   4               sta enemy1_frightened
+0BFB  8D 88 03   4               sta enemy2_frightened
+0BFE  A9 0E      2               lda #FRIGHTENED_COLOR
+0C00  8D 28 D0   4               sta SPRITE1_COLOR
+0C03  8D 29 D0   4               sta SPRITE2_COLOR
+0C06  60         6               rts
+0C07  AD 85 03   4               lda pellet_vulnerable_timer_lo
+0C0A  0D 86 03   4               ora pellet_vulnerable_timer_hi
+0C0D  F0 25      2/3/4           beq __local24_done                  ; already inactive -- nothing to
+0C0F  AD 85 03   4               lda pellet_vulnerable_timer_lo
+0C12  D0 03      2/3/4           bne __local24_dec_lo
+0C14  CE 86 03   6               dec pellet_vulnerable_timer_hi
+0C17  CE 85 03   6               dec pellet_vulnerable_timer_lo
+0C1A  AD 85 03   4               lda pellet_vulnerable_timer_lo
+0C1D  0D 86 03   4               ora pellet_vulnerable_timer_hi
+0C20  D0 12      2/3/4           bne __local24_done                  ; still counting down
+0C22  A9 00      2               lda #$00
+0C24  8D 87 03   4               sta enemy1_frightened
+0C27  8D 88 03   4               sta enemy2_frightened
+0C2A  A9 02      2               lda #ENEMY1_COLOR
+0C2C  8D 28 D0   4               sta SPRITE1_COLOR
+0C2F  A9 04      2               lda #ENEMY2_COLOR
+0C31  8D 29 D0   4               sta SPRITE2_COLOR
+0C34  60         6               rts
+0C35  AD 70 03   4               lda enemy1_rel_x_lo
+0C38  8D 78 03   4               sta enemy_rel_x_lo
+0C3B  AD 71 03   4               lda enemy1_rel_x_hi
+0C3E  8D 79 03   4               sta enemy_rel_x_hi
+0C41  AD 72 03   4               lda enemy1_rel_y
+0C44  8D 7A 03   4               sta enemy_rel_y
+0C47  AD 73 03   4               lda enemy1_direction
+0C4A  8D 7B 03   4               sta enemy_direction
+0C4D  A9 01      2               lda #1
+0C4F  8D 7C 03   4               sta enemy_sprite_num
+0C52  20 06 0A   6               jsr reset_enemy_to_start
+0C55  A9 02      2               lda #ENEMY1_COLOR
+0C57  8D 28 D0   4               sta SPRITE1_COLOR
+0C5A  20 62 0F   6               jsr update_enemy_sprite_position
+0C5D  AD 78 03   4               lda enemy_rel_x_lo
+0C60  8D 70 03   4               sta enemy1_rel_x_lo
+0C63  AD 79 03   4               lda enemy_rel_x_hi
+0C66  8D 71 03   4               sta enemy1_rel_x_hi
+0C69  AD 7A 03   4               lda enemy_rel_y
+0C6C  8D 72 03   4               sta enemy1_rel_y
+0C6F  AD 7B 03   4               lda enemy_direction
+0C72  8D 73 03   4               sta enemy1_direction
+0C75  AD 89 03   4               lda enemy_frightened
+0C78  8D 87 03   4               sta enemy1_frightened
+0C7B  20 D6 0B   6               jsr add_enemy_eaten_score
+0C7E  4C FA 0C   3               jmp render_score
+0C81  AD 74 03   4               lda enemy2_rel_x_lo
+0C84  8D 78 03   4               sta enemy_rel_x_lo
+0C87  AD 75 03   4               lda enemy2_rel_x_hi
+0C8A  8D 79 03   4               sta enemy_rel_x_hi
+0C8D  AD 76 03   4               lda enemy2_rel_y
+0C90  8D 7A 03   4               sta enemy_rel_y
+0C93  AD 77 03   4               lda enemy2_direction
+0C96  8D 7B 03   4               sta enemy_direction
+0C99  A9 02      2               lda #2
+0C9B  8D 7C 03   4               sta enemy_sprite_num
+0C9E  20 06 0A   6               jsr reset_enemy_to_start
+0CA1  A9 04      2               lda #ENEMY2_COLOR
+0CA3  8D 29 D0   4               sta SPRITE2_COLOR
+0CA6  20 62 0F   6               jsr update_enemy_sprite_position
+0CA9  AD 78 03   4               lda enemy_rel_x_lo
+0CAC  8D 74 03   4               sta enemy2_rel_x_lo
+0CAF  AD 79 03   4               lda enemy_rel_x_hi
+0CB2  8D 75 03   4               sta enemy2_rel_x_hi
+0CB5  AD 7A 03   4               lda enemy_rel_y
+0CB8  8D 76 03   4               sta enemy2_rel_y
+0CBB  AD 7B 03   4               lda enemy_direction
+0CBE  8D 77 03   4               sta enemy2_direction
+0CC1  AD 89 03   4               lda enemy_frightened
+0CC4  8D 88 03   4               sta enemy2_frightened
+0CC7  20 D6 0B   6               jsr add_enemy_eaten_score
+0CCA  4C FA 0C   3               jmp render_score
+0CCD  A2 00      2               ldx #$00
+0CCF  AD 53 03   4               lda score_scratch_hi
+0CD2  CD 55 03   4               cmp subtract_amount_hi
+0CD5  90 21      2/3/4           bcc __local27_done                  ; scratch_hi < amount_hi: too small
+0CD7  D0 08      2/3/4           bne __local27_do_subtract           ; scratch_hi > amount_hi: big enough
+0CD9  AD 52 03   4               lda score_scratch_lo
+0CDC  CD 54 03   4               cmp subtract_amount_lo
+0CDF  90 17      2/3/4           bcc __local27_done                  ; equal hi, but lo < amount_lo
+0CE1  AD 52 03   4               lda score_scratch_lo
+0CE4  38         2               sec
+0CE5  ED 54 03   4               sbc subtract_amount_lo
+0CE8  8D 52 03   4               sta score_scratch_lo
+0CEB  AD 53 03   4               lda score_scratch_hi
+0CEE  ED 55 03   4               sbc subtract_amount_hi
+0CF1  8D 53 03   4               sta score_scratch_hi
+0CF4  E8         2               inx
+0CF5  4C CF 0C   3               jmp __local27_loop
+0CF8  8A         2               txa
+0CF9  60         6               rts
+0CFA  A9 01      2               lda #<(SCREEN + MAZE_SCREEN_COL)
+0CFC  85 02      3               sta screen_ptr
+0CFE  A9 04      2               lda #>(SCREEN + MAZE_SCREEN_COL)
+0D00  85 03      3               sta screen_ptr+1
+0D02  A0 00      2               ldy #$00
+0D04  A9 0E      2               lda #CHAR_S
+0D06  91 02      6               sta (screen_ptr),y
+0D08  C8         2               iny
+0D09  A9 0F      2               lda #CHAR_C
+0D0B  91 02      6               sta (screen_ptr),y
+0D0D  C8         2               iny
+0D0E  A9 10      2               lda #CHAR_O
+0D10  91 02      6               sta (screen_ptr),y
+0D12  C8         2               iny
+0D13  A9 11      2               lda #CHAR_R
+0D15  91 02      6               sta (screen_ptr),y
+0D17  C8         2               iny
+0D18  A9 12      2               lda #CHAR_E
+0D1A  91 02      6               sta (screen_ptr),y
+0D1C  C8         2               iny
+0D1D  A9 00      2               lda #TILE_EMPTY
+0D1F  91 02      6               sta (screen_ptr),y
+0D21  C8         2               iny
+0D22  AD 50 03   4               lda score_lo
+0D25  8D 52 03   4               sta score_scratch_lo
+0D28  AD 51 03   4               lda score_hi
+0D2B  8D 53 03   4               sta score_scratch_hi
+0D2E  A9 10      2               lda #<10000
+0D30  8D 54 03   4               sta subtract_amount_lo
+0D33  A9 27      2               lda #>10000
+0D35  8D 55 03   4               sta subtract_amount_hi
+0D38  20 CD 0C   6               jsr extract_digit
+0D3B  18         2               clc
+0D3C  69 04      2               adc #CHAR_DIGIT_0
+0D3E  91 02      6               sta (screen_ptr),y
+0D40  C8         2               iny
+0D41  A9 E8      2               lda #<1000
+0D43  8D 54 03   4               sta subtract_amount_lo
+0D46  A9 03      2               lda #>1000
+0D48  8D 55 03   4               sta subtract_amount_hi
+0D4B  20 CD 0C   6               jsr extract_digit
+0D4E  18         2               clc
+0D4F  69 04      2               adc #CHAR_DIGIT_0
+0D51  91 02      6               sta (screen_ptr),y
+0D53  C8         2               iny
+0D54  A9 64      2               lda #<100
+0D56  8D 54 03   4               sta subtract_amount_lo
+0D59  A9 00      2               lda #>100
+0D5B  8D 55 03   4               sta subtract_amount_hi
+0D5E  20 CD 0C   6               jsr extract_digit
+0D61  18         2               clc
+0D62  69 04      2               adc #CHAR_DIGIT_0
+0D64  91 02      6               sta (screen_ptr),y
+0D66  C8         2               iny
+0D67  A9 0A      2               lda #<10
+0D69  8D 54 03   4               sta subtract_amount_lo
+0D6C  A9 00      2               lda #>10
+0D6E  8D 55 03   4               sta subtract_amount_hi
+0D71  20 CD 0C   6               jsr extract_digit
+0D74  18         2               clc
+0D75  69 04      2               adc #CHAR_DIGIT_0
+0D77  91 02      6               sta (screen_ptr),y
+0D79  C8         2               iny
+0D7A  A9 01      2               lda #<1
+0D7C  8D 54 03   4               sta subtract_amount_lo
+0D7F  A9 00      2               lda #>1
+0D81  8D 55 03   4               sta subtract_amount_hi
+0D84  20 CD 0C   6               jsr extract_digit
+0D87  18         2               clc
+0D88  69 04      2               adc #CHAR_DIGIT_0
+0D8A  91 02      6               sta (screen_ptr),y
+0D8C  60         6               rts
+0D8D  8D 43 03   4               sta can_move_dir_scratch
+0D90  AD 3C 03   4               lda player_rel_x_lo
+0D93  8D 44 03   4               sta x_shift_lo
+0D96  AD 3D 03   4               lda player_rel_x_hi
+0D99  8D 45 03   4               sta x_shift_hi
+0D9C  4E 45 03   6               lsr x_shift_hi
+0D9F  6E 44 03   6               ror x_shift_lo
+0DA2  4E 45 03   6               lsr x_shift_hi
+0DA5  6E 44 03   6               ror x_shift_lo
+0DA8  4E 45 03   6               lsr x_shift_hi
+0DAB  6E 44 03   6               ror x_shift_lo
+0DAE  AD 44 03   4               lda x_shift_lo
+0DB1  8D 41 03   4               sta tile_col
+0DB4  AD 3E 03   4               lda player_rel_y
+0DB7  4A         2               lsr a
+0DB8  4A         2               lsr a
+0DB9  4A         2               lsr a
+0DBA  8D 42 03   4               sta tile_row
+0DBD  AD 43 03   4               lda can_move_dir_scratch
+0DC0  C9 01      2               cmp #1
+0DC2  D0 06      2/3/4           bne __local29_try_down
+0DC4  CE 42 03   6               dec tile_row
+0DC7  4C E1 0D   3               jmp __local29_check
+0DCA  C9 02      2               cmp #2
+0DCC  D0 06      2/3/4           bne __local29_try_left
+0DCE  EE 42 03   6               inc tile_row
+0DD1  4C E1 0D   3               jmp __local29_check
+0DD4  C9 03      2               cmp #3
+0DD6  D0 06      2/3/4           bne __local29_must_be_right
+0DD8  CE 41 03   6               dec tile_col
+0DDB  4C E1 0D   3               jmp __local29_check
+0DDE  EE 41 03   6               inc tile_col
+0DE1  20 3F 0A   6               jsr get_tile
+0DE4  C9 01      2               cmp #TILE_WALL
+0DE6  60         6               rts
+0DE7  8D 43 03   4               sta can_move_dir_scratch
+0DEA  AD 78 03   4               lda enemy_rel_x_lo
+0DED  8D 44 03   4               sta x_shift_lo
+0DF0  AD 79 03   4               lda enemy_rel_x_hi
+0DF3  8D 45 03   4               sta x_shift_hi
+0DF6  4E 45 03   6               lsr x_shift_hi
+0DF9  6E 44 03   6               ror x_shift_lo
+0DFC  4E 45 03   6               lsr x_shift_hi
+0DFF  6E 44 03   6               ror x_shift_lo
+0E02  4E 45 03   6               lsr x_shift_hi
+0E05  6E 44 03   6               ror x_shift_lo
+0E08  AD 44 03   4               lda x_shift_lo
+0E0B  8D 41 03   4               sta tile_col
+0E0E  AD 7A 03   4               lda enemy_rel_y
+0E11  4A         2               lsr a
+0E12  4A         2               lsr a
+0E13  4A         2               lsr a
+0E14  8D 42 03   4               sta tile_row
+0E17  AD 43 03   4               lda can_move_dir_scratch
+0E1A  C9 01      2               cmp #1
+0E1C  D0 06      2/3/4           bne __local30_try_down
+0E1E  CE 42 03   6               dec tile_row
+0E21  4C 3B 0E   3               jmp __local30_check
+0E24  C9 02      2               cmp #2
+0E26  D0 06      2/3/4           bne __local30_try_left
+0E28  EE 42 03   6               inc tile_row
+0E2B  4C 3B 0E   3               jmp __local30_check
+0E2E  C9 03      2               cmp #3
+0E30  D0 06      2/3/4           bne __local30_must_be_right
+0E32  CE 41 03   6               dec tile_col
+0E35  4C 3B 0E   3               jmp __local30_check
+0E38  EE 41 03   6               inc tile_col
+0E3B  20 3F 0A   6               jsr get_tile
+0E3E  C9 01      2               cmp #TILE_WALL
+0E40  60         6               rts
+0E41  AD 41 03   4               lda tile_col
+0E44  38         2               sec
+0E45  ED 80 03   4               sbc player_tile_col
+0E48  B0 05      2/3/4           bcs __local31_col_positive
+0E4A  49 FF      2               eor #$ff                  ; two's-complement negate (no
+0E4C  18         2               clc                          ; direct NEG on 6502): flips a
+0E4D  69 01      2               adc #$01                     ; negative difference positive,
+0E4F  8D 7F 03   4               sta enemy_dist_scratch
+0E52  AD 42 03   4               lda tile_row
+0E55  38         2               sec
+0E56  ED 81 03   4               sbc player_tile_row
+0E59  B0 05      2/3/4           bcs __local31_row_positive
+0E5B  49 FF      2               eor #$ff
+0E5D  18         2               clc
+0E5E  69 01      2               adc #$01
+0E60  18         2               clc
+0E61  6D 7F 03   4               adc enemy_dist_scratch     ; total Manhattan distance
+0E64  8D 7F 03   4               sta enemy_dist_scratch     ; overwrite with the final total --
+0E67  AD 8A 03   4               lda enemy_found_candidate
+0E6A  F0 1A      2/3/4           beq __local31_accept                 ; nothing found yet this call --
+0E6C  AD 89 03   4               lda enemy_frightened
+0E6F  F0 0D      2/3/4           beq __local31_seeking_min
+0E71  AD 7F 03   4               lda enemy_dist_scratch      ; fleeing: keep this candidate
+0E74  CD 7E 03   4               cmp enemy_best_dist            ; only if it's strictly farther
+0E77  90 1E      2/3/4           bcc __local31_not_better                 ; than the current best
+0E79  F0 1C      2/3/4           beq __local31_not_better
+0E7B  4C 86 0E   3               jmp __local31_accept
+0E7E  AD 7F 03   4               lda enemy_dist_scratch      ; chasing: keep this candidate
+0E81  CD 7E 03   4               cmp enemy_best_dist            ; only if it's strictly closer
+0E84  B0 11      2/3/4           bcs __local31_not_better                 ; than the current best
+0E86  AD 7F 03   4               lda enemy_dist_scratch
+0E89  8D 7E 03   4               sta enemy_best_dist
+0E8C  AD 43 03   4               lda can_move_dir_scratch
+0E8F  8D 7D 03   4               sta enemy_best_direction
+0E92  A9 01      2               lda #$01
+0E94  8D 8A 03   4               sta enemy_found_candidate
+0E97  60         6               rts
+0E98  A9 00      2               lda #$00
+0E9A  8D 8A 03   4               sta enemy_found_candidate
+0E9D  8D 7D 03   4               sta enemy_best_direction
+0EA0  8D 7E 03   4               sta enemy_best_dist
+0EA3  AD 7B 03   4               lda enemy_direction         ; try up (1) -- skip if already
+0EA6  C9 02      2               cmp #2                         ; moving down (2), up's own
+0EA8  F0 0A      2/3/4           beq __local32_skip_up                   ; reverse
+0EAA  A9 01      2               lda #1
+0EAC  20 E7 0D   6               jsr can_enemy_move_direction
+0EAF  F0 03      2/3/4           beq __local32_skip_up
+0EB1  20 41 0E   6               jsr consider_enemy_candidate
+0EB4  AD 7B 03   4               lda enemy_direction         ; try down (2) -- skip if already
+0EB7  C9 01      2               cmp #1                         ; moving up (1)
+0EB9  F0 0A      2/3/4           beq __local32_skip_down
+0EBB  A9 02      2               lda #2
+0EBD  20 E7 0D   6               jsr can_enemy_move_direction
+0EC0  F0 03      2/3/4           beq __local32_skip_down
+0EC2  20 41 0E   6               jsr consider_enemy_candidate
+0EC5  AD 7B 03   4               lda enemy_direction         ; try left (3) -- skip if already
+0EC8  C9 04      2               cmp #4                         ; moving right (4)
+0ECA  F0 0A      2/3/4           beq __local32_skip_left
+0ECC  A9 03      2               lda #3
+0ECE  20 E7 0D   6               jsr can_enemy_move_direction
+0ED1  F0 03      2/3/4           beq __local32_skip_left
+0ED3  20 41 0E   6               jsr consider_enemy_candidate
+0ED6  AD 7B 03   4               lda enemy_direction         ; try right (4) -- skip if already
+0ED9  C9 03      2               cmp #3                         ; moving left (3)
+0EDB  F0 0A      2/3/4           beq __local32_skip_right
+0EDD  A9 04      2               lda #4
+0EDF  20 E7 0D   6               jsr can_enemy_move_direction
+0EE2  F0 03      2/3/4           beq __local32_skip_right
+0EE4  20 41 0E   6               jsr consider_enemy_candidate
+0EE7  AD 8A 03   4               lda enemy_found_candidate
+0EEA  F0 03      2/3/4           beq __local32_dead_end
+0EEC  4C 12 0F   3               jmp __local32_have_direction
+0EEF  AD 7B 03   4               lda enemy_direction
+0EF2  C9 01      2               cmp #1
+0EF4  D0 05      2/3/4           bne __local32_rev_try_down
+0EF6  A9 02      2               lda #2
+0EF8  4C 0F 0F   3               jmp __local32_have_reverse
+0EFB  C9 02      2               cmp #2
+0EFD  D0 05      2/3/4           bne __local32_rev_try_left
+0EFF  A9 01      2               lda #1
+0F01  4C 0F 0F   3               jmp __local32_have_reverse
+0F04  C9 03      2               cmp #3
+0F06  D0 05      2/3/4           bne __local32_rev_must_be_right
+0F08  A9 04      2               lda #4
+0F0A  4C 0F 0F   3               jmp __local32_have_reverse
+0F0D  A9 03      2               lda #3
+0F0F  8D 7D 03   4               sta enemy_best_direction
+0F12  AD 7D 03   4               lda enemy_best_direction
+0F15  8D 7B 03   4               sta enemy_direction
+0F18  60         6               rts
+0F19  AD 7B 03   4               lda enemy_direction
+0F1C  F0 2E      2/3/4           beq __local33_done
+0F1E  C9 01      2               cmp #1
+0F20  D0 06      2/3/4           bne __local33_try_down
+0F22  CE 7A 03   6               dec enemy_rel_y
+0F25  4C 4C 0F   3               jmp __local33_done
+0F28  C9 02      2               cmp #2
+0F2A  D0 06      2/3/4           bne __local33_try_left
+0F2C  EE 7A 03   6               inc enemy_rel_y
+0F2F  4C 4C 0F   3               jmp __local33_done
+0F32  C9 03      2               cmp #3
+0F34  D0 0E      2/3/4           bne __local33_must_be_right
+0F36  AD 78 03   4               lda enemy_rel_x_lo
+0F39  D0 03      2/3/4           bne __local33_no_borrow
+0F3B  CE 79 03   6               dec enemy_rel_x_hi
+0F3E  CE 78 03   6               dec enemy_rel_x_lo
+0F41  4C 4C 0F   3               jmp __local33_done
+0F44  EE 78 03   6               inc enemy_rel_x_lo
+0F47  D0 03      2/3/4           bne __local33_done
+0F49  EE 79 03   6               inc enemy_rel_x_hi
+0F4C  60         6               rts
+0F4D  AD 78 03   4               lda enemy_rel_x_lo          ; only the low byte's low 3 bits
+0F50  29 07      2               and #%00000111                 ; matter for alignment, the
+0F52  D0 0A      2/3/4           bne __local34_skip_decide                ; same reasoning update_
+0F54  AD 7A 03   4               lda enemy_rel_y
+0F57  29 07      2               and #%00000111
+0F59  D0 03      2/3/4           bne __local34_skip_decide
+0F5B  20 98 0E   6               jsr decide_enemy_direction
+0F5E  20 19 0F   6               jsr move_enemy_step
+0F61  60         6               rts
+0F62  AD 78 03   4               lda enemy_rel_x_lo
+0F65  18         2               clc
+0F66  69 20      2               adc #<MAZE_ORIGIN_X
+0F68  8D 82 03   4               sta enemy_sprite_x_lo
+0F6B  AD 79 03   4               lda enemy_rel_x_hi
+0F6E  69 00      2               adc #>MAZE_ORIGIN_X
+0F70  8D 83 03   4               sta enemy_sprite_x_hi
+0F73  AD 7C 03   4               lda enemy_sprite_num
+0F76  0A         2               asl a                       ; sprite register offset: n*2
+0F77  AA         2               tax
+0F78  AD 82 03   4               lda enemy_sprite_x_lo
+0F7B  9D 00 D0   5               sta SPRITE0_X,x
+0F7E  AC 7C 03   4               ldy enemy_sprite_num
+0F81  AD 10 D0   4               lda SPRITE_X_MSB
+0F84  39 A5 0F   4/5             and enemy_msb_clear_masks,y
+0F87  8D 10 D0   4               sta SPRITE_X_MSB
+0F8A  AD 83 03   4               lda enemy_sprite_x_hi
+0F8D  F0 09      2/3/4           beq __local35_msb_clear
+0F8F  AD 10 D0   4               lda SPRITE_X_MSB
+0F92  19 A2 0F   4/5             ora enemy_msb_set_masks,y
+0F95  8D 10 D0   4               sta SPRITE_X_MSB
+0F98  AD 7A 03   4               lda enemy_rel_y
+0F9B  18         2               clc
+0F9C  69 3A      2               adc #MAZE_ORIGIN_Y
+0F9E  9D 01 D0   5               sta SPRITE0_Y,x
+0FA1  60         6               rts
+0FA8  EE 84 03   6               inc enemy_move_throttle
+0FAB  AD 3C 03   4               lda player_rel_x_lo
+0FAE  8D 44 03   4               sta x_shift_lo
+0FB1  AD 3D 03   4               lda player_rel_x_hi
+0FB4  8D 45 03   4               sta x_shift_hi
+0FB7  4E 45 03   6               lsr x_shift_hi
+0FBA  6E 44 03   6               ror x_shift_lo
+0FBD  4E 45 03   6               lsr x_shift_hi
+0FC0  6E 44 03   6               ror x_shift_lo
+0FC3  4E 45 03   6               lsr x_shift_hi
+0FC6  6E 44 03   6               ror x_shift_lo
+0FC9  AD 44 03   4               lda x_shift_lo
+0FCC  8D 80 03   4               sta player_tile_col
+0FCF  AD 3E 03   4               lda player_rel_y
+0FD2  4A         2               lsr a
+0FD3  4A         2               lsr a
+0FD4  4A         2               lsr a
+0FD5  8D 81 03   4               sta player_tile_row
+0FD8  AD 70 03   4               lda enemy1_rel_x_lo
+0FDB  8D 78 03   4               sta enemy_rel_x_lo
+0FDE  AD 71 03   4               lda enemy1_rel_x_hi
+0FE1  8D 79 03   4               sta enemy_rel_x_hi
+0FE4  AD 72 03   4               lda enemy1_rel_y
+0FE7  8D 7A 03   4               sta enemy_rel_y
+0FEA  AD 73 03   4               lda enemy1_direction
+0FED  8D 7B 03   4               sta enemy_direction
+0FF0  AD 87 03   4               lda enemy1_frightened
+0FF3  8D 89 03   4               sta enemy_frightened
+0FF6  A9 01      2               lda #1
+0FF8  8D 7C 03   4               sta enemy_sprite_num
+0FFB  AD 89 03   4               lda enemy_frightened
+0FFE  F0 0D      2/3/4           beq __local38_normal_throttle_1
+1000  A9 01      2               lda #FRIGHTENED_THROTTLE_MASK
+1002  8D 8B 03   4               sta enemy_throttle_mask_scratch
+1005  A9 01      2               lda #FRIGHTENED_THROTTLE_SKIP_FRAME
+1007  8D 8C 03   4               sta enemy_throttle_skip_scratch
+100A  4C 17 10   3               jmp __local38_throttle_check_1
+100D  A9 03      2               lda #ENEMY_THROTTLE_MASK
+100F  8D 8B 03   4               sta enemy_throttle_mask_scratch
+1012  A9 03      2               lda #ENEMY_THROTTLE_SKIP_FRAME
+1014  8D 8C 03   4               sta enemy_throttle_skip_scratch
+1017  AD 84 03   4               lda enemy_move_throttle
+101A  2D 8B 03   4               and enemy_throttle_mask_scratch
+101D  CD 8C 03   4               cmp enemy_throttle_skip_scratch
+1020  F0 03      2/3/4           beq __local38_skip_move_1
+1022  20 4D 0F   6               jsr update_enemy_ai_and_move
+1025  20 62 0F   6               jsr update_enemy_sprite_position
+1028  AD 78 03   4               lda enemy_rel_x_lo
+102B  8D 70 03   4               sta enemy1_rel_x_lo
+102E  AD 79 03   4               lda enemy_rel_x_hi
+1031  8D 71 03   4               sta enemy1_rel_x_hi
+1034  AD 7A 03   4               lda enemy_rel_y
+1037  8D 72 03   4               sta enemy1_rel_y
+103A  AD 7B 03   4               lda enemy_direction
+103D  8D 73 03   4               sta enemy1_direction
+1040  AD 89 03   4               lda enemy_frightened
+1043  8D 87 03   4               sta enemy1_frightened
+1046  AD 74 03   4               lda enemy2_rel_x_lo
+1049  8D 78 03   4               sta enemy_rel_x_lo
+104C  AD 75 03   4               lda enemy2_rel_x_hi
+104F  8D 79 03   4               sta enemy_rel_x_hi
+1052  AD 76 03   4               lda enemy2_rel_y
+1055  8D 7A 03   4               sta enemy_rel_y
+1058  AD 77 03   4               lda enemy2_direction
+105B  8D 7B 03   4               sta enemy_direction
+105E  AD 88 03   4               lda enemy2_frightened
+1061  8D 89 03   4               sta enemy_frightened
+1064  A9 02      2               lda #2
+1066  8D 7C 03   4               sta enemy_sprite_num
+1069  AD 89 03   4               lda enemy_frightened
+106C  F0 0D      2/3/4           beq __local38_normal_throttle_2
+106E  A9 01      2               lda #FRIGHTENED_THROTTLE_MASK
+1070  8D 8B 03   4               sta enemy_throttle_mask_scratch
+1073  A9 01      2               lda #FRIGHTENED_THROTTLE_SKIP_FRAME
+1075  8D 8C 03   4               sta enemy_throttle_skip_scratch
+1078  4C 85 10   3               jmp __local38_throttle_check_2
+107B  A9 03      2               lda #ENEMY_THROTTLE_MASK
+107D  8D 8B 03   4               sta enemy_throttle_mask_scratch
+1080  A9 03      2               lda #ENEMY_THROTTLE_SKIP_FRAME
+1082  8D 8C 03   4               sta enemy_throttle_skip_scratch
+1085  AD 84 03   4               lda enemy_move_throttle
+1088  2D 8B 03   4               and enemy_throttle_mask_scratch
+108B  CD 8C 03   4               cmp enemy_throttle_skip_scratch
+108E  F0 03      2/3/4           beq __local38_skip_move_2
+1090  20 4D 0F   6               jsr update_enemy_ai_and_move
+1093  20 62 0F   6               jsr update_enemy_sprite_position
+1096  AD 78 03   4               lda enemy_rel_x_lo
+1099  8D 74 03   4               sta enemy2_rel_x_lo
+109C  AD 79 03   4               lda enemy_rel_x_hi
+109F  8D 75 03   4               sta enemy2_rel_x_hi
+10A2  AD 7A 03   4               lda enemy_rel_y
+10A5  8D 76 03   4               sta enemy2_rel_y
+10A8  AD 7B 03   4               lda enemy_direction
+10AB  8D 77 03   4               sta enemy2_direction
+10AE  AD 89 03   4               lda enemy_frightened
+10B1  8D 88 03   4               sta enemy2_frightened
+10B4  60         6               rts
+10B5  AD 1E D0   4               lda SPRITE_SPRITE_COLLISION
+10B8  8D 8D 03   4               sta collision_scratch
+10BB  AD 8D 03   4               lda collision_scratch
+10BE  29 01      2               and #%00000001
+10C0  F0 24      2/3/4           beq __local39_done                  ; player wasn't involved at all
+10C2  AD 8D 03   4               lda collision_scratch
+10C5  29 02      2               and #%00000010
+10C7  F0 08      2/3/4           beq __local39_check_enemy2
+10C9  AD 87 03   4               lda enemy1_frightened
+10CC  F0 15      2/3/4           beq __local39_player_caught         ; touched enemy 1, not frightened
+10CE  20 35 0C   6               jsr eat_enemy1
+10D1  AD 8D 03   4               lda collision_scratch
+10D4  29 04      2               and #%00000100
+10D6  F0 0E      2/3/4           beq __local39_done
+10D8  AD 88 03   4               lda enemy2_frightened
+10DB  F0 06      2/3/4           beq __local39_player_caught         ; touched enemy 2, not frightened
+10DD  20 81 0C   6               jsr eat_enemy2
+10E0  4C E6 10   3               jmp __local39_done
+10E3  20 31 09   6               jsr init_sprite
+10E6  60         6               rts
+10E7  AD 3C 03   4               lda player_rel_x_lo    ; only the low byte's low 3 bits matter
+10EA  29 07      2               and #%00000111
+10EC  F0 03      2/3/4           beq __local40_check_y_aligned
+10EE  4C D9 11   3               jmp __local40_move_step
+10F1  AD 3E 03   4               lda player_rel_y
+10F4  29 07      2               and #%00000111
+10F6  F0 03      2/3/4           beq __local40_aligned
+10F8  4C D9 11   3               jmp __local40_move_step
+10FB  20 10 08   6               jsr read_joy2
+10FE  8D 40 03   4               sta joy_state
+1101  78         2               sei
+1102  A9 FF      2               lda #%11111111
+1104  8D 02 DC   4               sta CIA1_DDRA
+1107  A9 FD      2               lda #KEY_W_COL
+1109  8D 00 DC   4               sta CIA1_PRA
+110C  AD 01 DC   4               lda CIA1_PRB
+110F  58         2               cli
+1110  49 FF      2               eor #$ff
+1112  29 02      2               and #KEY_W_ROW
+1114  F0 08      2/3/4           beq __local40_not_w
+1116  AD 40 03   4               lda joy_state
+1119  09 01      2               ora #%00000001
+111B  8D 40 03   4               sta joy_state
+111E  78         2               sei
+111F  A9 FF      2               lda #%11111111
+1121  8D 02 DC   4               sta CIA1_DDRA
+1124  A9 FD      2               lda #KEY_S_COL
+1126  8D 00 DC   4               sta CIA1_PRA
+1129  AD 01 DC   4               lda CIA1_PRB
+112C  58         2               cli
+112D  49 FF      2               eor #$ff
+112F  29 20      2               and #KEY_S_ROW
+1131  F0 08      2/3/4           beq __local40_not_s
+1133  AD 40 03   4               lda joy_state
+1136  09 02      2               ora #%00000010
+1138  8D 40 03   4               sta joy_state
+113B  78         2               sei
+113C  A9 FF      2               lda #%11111111
+113E  8D 02 DC   4               sta CIA1_DDRA
+1141  A9 FD      2               lda #KEY_A_COL
+1143  8D 00 DC   4               sta CIA1_PRA
+1146  AD 01 DC   4               lda CIA1_PRB
+1149  58         2               cli
+114A  49 FF      2               eor #$ff
+114C  29 04      2               and #KEY_A_ROW
+114E  F0 08      2/3/4           beq __local40_not_a
+1150  AD 40 03   4               lda joy_state
+1153  09 04      2               ora #%00000100
+1155  8D 40 03   4               sta joy_state
+1158  78         2               sei
+1159  A9 FF      2               lda #%11111111
+115B  8D 02 DC   4               sta CIA1_DDRA
+115E  A9 FB      2               lda #KEY_D_COL
+1160  8D 00 DC   4               sta CIA1_PRA
+1163  AD 01 DC   4               lda CIA1_PRB
+1166  58         2               cli
+1167  49 FF      2               eor #$ff
+1169  29 04      2               and #KEY_D_ROW
+116B  F0 08      2/3/4           beq __local40_not_d
+116D  AD 40 03   4               lda joy_state
+1170  09 08      2               ora #%00001000
+1172  8D 40 03   4               sta joy_state
+1175  AD 40 03   4               lda joy_state
+1178  29 01      2               and #%00000001          ; up
+117A  F0 0F      2/3/4           beq __local40_check_req_down
+117C  A9 01      2               lda #1
+117E  20 8D 0D   6               jsr can_move_direction
+1181  F0 08      2/3/4           beq __local40_check_req_down       ; blocked -- fall through to the next
+1183  A9 01      2               lda #1
+1185  8D 3F 03   4               sta player_direction
+1188  4C CA 11   3               jmp __local40_direction_set
+118B  AD 40 03   4               lda joy_state
+118E  29 02      2               and #%00000010          ; down
+1190  F0 0F      2/3/4           beq __local40_check_req_left
+1192  A9 02      2               lda #2
+1194  20 8D 0D   6               jsr can_move_direction
+1197  F0 08      2/3/4           beq __local40_check_req_left
+1199  A9 02      2               lda #2
+119B  8D 3F 03   4               sta player_direction
+119E  4C CA 11   3               jmp __local40_direction_set
+11A1  AD 40 03   4               lda joy_state
+11A4  29 04      2               and #%00000100          ; left
+11A6  F0 0F      2/3/4           beq __local40_check_req_right
+11A8  A9 03      2               lda #3
+11AA  20 8D 0D   6               jsr can_move_direction
+11AD  F0 08      2/3/4           beq __local40_check_req_right
+11AF  A9 03      2               lda #3
+11B1  8D 3F 03   4               sta player_direction
+11B4  4C CA 11   3               jmp __local40_direction_set
+11B7  AD 40 03   4               lda joy_state
+11BA  29 08      2               and #%00001000          ; right
+11BC  F0 0C      2/3/4           beq __local40_direction_set
+11BE  A9 04      2               lda #4
+11C0  20 8D 0D   6               jsr can_move_direction
+11C3  F0 05      2/3/4           beq __local40_direction_set
+11C5  A9 04      2               lda #4
+11C7  8D 3F 03   4               sta player_direction
+11CA  AD 3F 03   4               lda player_direction
+11CD  F0 0A      2/3/4           beq __local40_move_step             ; already stopped -- nothing to confirm
+11CF  20 8D 0D   6               jsr can_move_direction
+11D2  D0 05      2/3/4           bne __local40_move_step               ; still open -- proceed
+11D4  A9 00      2               lda #$00
+11D6  8D 3F 03   4               sta player_direction
+11D9  AD 3F 03   4               lda player_direction
+11DC  F0 2E      2/3/4           beq __local40_done
+11DE  C9 01      2               cmp #1
+11E0  D0 06      2/3/4           bne __local40_try_down
+11E2  CE 3E 03   6               dec player_rel_y
+11E5  4C 0C 12   3               jmp __local40_done
+11E8  C9 02      2               cmp #2
+11EA  D0 06      2/3/4           bne __local40_try_left
+11EC  EE 3E 03   6               inc player_rel_y
+11EF  4C 0C 12   3               jmp __local40_done
+11F2  C9 03      2               cmp #3
+11F4  D0 0E      2/3/4           bne __local40_must_be_right
+11F6  AD 3C 03   4               lda player_rel_x_lo
+11F9  D0 03      2/3/4           bne __local40_no_borrow
+11FB  CE 3D 03   6               dec player_rel_x_hi
+11FE  CE 3C 03   6               dec player_rel_x_lo
+1201  4C 0C 12   3               jmp __local40_done
+1204  EE 3C 03   6               inc player_rel_x_lo
+1207  D0 03      2/3/4           bne __local40_done
+1209  EE 3D 03   6               inc player_rel_x_hi
+120C  60         6               rts
+120D  AD 3C 03   4               lda player_rel_x_lo
+1210  18         2               clc
+1211  69 20      2               adc #<MAZE_ORIGIN_X
+1213  8D 46 03   4               sta sprite_x_lo
+1216  AD 3D 03   4               lda player_rel_x_hi
+1219  69 00      2               adc #>MAZE_ORIGIN_X
+121B  8D 47 03   4               sta sprite_x_hi
+121E  AD 46 03   4               lda sprite_x_lo
+1221  8D 00 D0   4               sta SPRITE0_X
+1224  AD 10 D0   4               lda SPRITE_X_MSB
+1227  29 FE      2               and #%11111110          ; clear bit 0 (PLAYER_SPRITE_X_MSB_BIT)
+1229  8D 10 D0   4               sta SPRITE_X_MSB
+122C  AD 47 03   4               lda sprite_x_hi
+122F  F0 08      2/3/4           beq __local45_msb_clear
+1231  AD 10 D0   4               lda SPRITE_X_MSB
+1234  09 01      2               ora #PLAYER_SPRITE_X_MSB_BIT
+1236  8D 10 D0   4               sta SPRITE_X_MSB
+1239  AD 3E 03   4               lda player_rel_y
+123C  18         2               clc
+123D  69 3A      2               adc #MAZE_ORIGIN_Y
+123F  8D 01 D0   4               sta SPRITE0_Y
+1242  60         6               rts
+12C1  A2 00      2               ldx #$00
+12C3  BD 05 14   4/5             lda tile_bitmaps,x
+12C6  9D 00 30   5               sta CHAR_MEM,x
+12C9  E8         2               inx
+12CA  E0 20      2               cpx #32
+12CC  D0 F5      2/3/4           bne __local48_loop
+12CE  60         6               rts
+12CF  78         2               sei
+12D0  A5 01      3               lda $01
+12D2  29 FB      2               and #%11111011          ; clear CHAREN -- character ROM
+12D4  85 01      3               sta $01                    ; visible at $D000-$DFFF instead of I/O
+12D6  A2 00      2               ldx #$00
+12D8  BD 80 D1   4/5             lda $d000 + 48*8,x
+12DB  9D 20 30   5               sta CHAR_MEM + CHAR_DIGIT_0*8,x
+12DE  E8         2               inx
+12DF  E0 50      2               cpx #(10*8)
+12E1  D0 F5      2/3/4           bne __local49_digit_loop
+12E3  A2 00      2               ldx #$00
+12E5  BD 98 D0   4/5             lda $d000 + 19*8,x
+12E8  9D 70 30   5               sta CHAR_MEM + CHAR_S*8,x
+12EB  E8         2               inx
+12EC  E0 08      2               cpx #8
+12EE  D0 F5      2/3/4           bne __local49_s_loop
+12F0  A2 00      2               ldx #$00
+12F2  BD 18 D0   4/5             lda $d000 + 3*8,x
+12F5  9D 78 30   5               sta CHAR_MEM + CHAR_C*8,x
+12F8  E8         2               inx
+12F9  E0 08      2               cpx #8
+12FB  D0 F5      2/3/4           bne __local49_c_loop
+12FD  A2 00      2               ldx #$00
+12FF  BD 78 D0   4/5             lda $d000 + 15*8,x
+1302  9D 80 30   5               sta CHAR_MEM + CHAR_O*8,x
+1305  E8         2               inx
+1306  E0 08      2               cpx #8
+1308  D0 F5      2/3/4           bne __local49_o_loop
+130A  A2 00      2               ldx #$00
+130C  BD 90 D0   4/5             lda $d000 + 18*8,x
+130F  9D 88 30   5               sta CHAR_MEM + CHAR_R*8,x
+1312  E8         2               inx
+1313  E0 08      2               cpx #8
+1315  D0 F5      2/3/4           bne __local49_r_loop
+1317  A2 00      2               ldx #$00
+1319  BD 28 D0   4/5             lda $d000 + 5*8,x
+131C  9D 90 30   5               sta CHAR_MEM + CHAR_E*8,x
+131F  E8         2               inx
+1320  E0 08      2               cpx #8
+1322  D0 F5      2/3/4           bne __local49_e_loop
+1324  A5 01      3               lda $01
+1326  09 04      2               ora #%00000100           ; restore CHAREN -- I/O visible again
+1328  85 01      3               sta $01
+132A  58         2               cli
+132B  60         6               rts
+132C  A9 0A      2               lda #LEVEL_FILENAME_LEN
+132E  A2 C0      2               ldx #<level_filename
+1330  A0 08      2               ldy #>level_filename
+1332  20 BD FF   6               jsr SETNAM
+1335  A9 02      2               lda #2                     ; logical file 2
+1337  A2 08      2               ldx #8                     ; device 8
+1339  A0 02      2               ldy #2                      ; secondary address 2 (read)
+133B  20 BA FF   6               jsr SETLFS
+133E  20 C0 FF   6               jsr OPEN
+1341  A2 02      2               ldx #2
+1343  20 C6 FF   6               jsr CHKIN
+1346  20 B7 FF   6               jsr READST
+1349  29 40      2               and #$40
+134B  F0 03      2/3/4           beq __local50_found
+134D  4C B8 13   3               jmp __local50_load_error
+1350  20 B7 FF   6               jsr READST
+1353  D0 63      2/3/4           bne __local50_load_error
+1355  20 CF FF   6               jsr CHRIN
+1358  8D 5A 03   4               sta player_start_col
+135B  20 B7 FF   6               jsr READST
+135E  D0 58      2/3/4           bne __local50_load_error
+1360  20 CF FF   6               jsr CHRIN
+1363  8D 5B 03   4               sta player_start_row
+1366  A2 00      2               ldx #$00
+1368  20 B7 FF   6               jsr READST
+136B  D0 4B      2/3/4           bne __local50_load_error
+136D  20 CF FF   6               jsr CHRIN
+1370  9D 5C 03   5               sta level_title,x
+1373  E8         2               inx
+1374  E0 14      2               cpx #LEVEL_TITLE_LEN
+1376  D0 F0      2/3/4           bne __local50_title_loop
+1378  A9 00      2               lda #<MAZE_GRID
+137A  85 04      3               sta grid_ptr
+137C  A9 38      2               lda #>MAZE_GRID
+137E  85 05      3               sta grid_ptr+1
+1380  A9 44      2               lda #<(TILE_COLS * TILE_ROWS)
+1382  8D 4E 03   4               sta maze_copy_count_lo
+1385  A9 03      2               lda #>(TILE_COLS * TILE_ROWS)
+1387  8D 4F 03   4               sta maze_copy_count_hi
+138A  20 B7 FF   6               jsr READST
+138D  D0 29      2/3/4           bne __local50_load_error
+138F  20 CF FF   6               jsr CHRIN
+1392  A0 00      2               ldy #$00
+1394  91 04      6               sta (grid_ptr),y
+1396  E6 04      5               inc grid_ptr
+1398  D0 02      2/3/4           bne __local50_no_carry
+139A  E6 05      5               inc grid_ptr+1
+139C  AD 4E 03   4               lda maze_copy_count_lo
+139F  D0 03      2/3/4           bne __local50_dec_lo
+13A1  CE 4F 03   6               dec maze_copy_count_hi
+13A4  CE 4E 03   6               dec maze_copy_count_lo
+13A7  AD 4E 03   4               lda maze_copy_count_lo
+13AA  0D 4F 03   4               ora maze_copy_count_hi
+13AD  D0 DB      2/3/4           bne __local50_tile_loop
+13AF  20 CC FF   6               jsr CLRCHN
+13B2  A9 02      2               lda #2
+13B4  20 C3 FF   6               jsr CLOSE
+13B7  60         6               rts
+13B8  20 CC FF   6               jsr CLRCHN
+13BB  A9 02      2               lda #2
+13BD  20 C3 FF   6               jsr CLOSE
+13C0  A9 02      2               lda #$02                  ; red
+13C2  8D 20 D0   4               sta VIC_BORDER
+13C5  4C C5 13   3               jmp __local50_halt
+13C8  A9 29      2               lda #<(SCREEN + MAZE_SCREEN_ROW*40 + MAZE_SCREEN_COL)
+13CA  85 02      3               sta screen_ptr
+13CC  A9 04      2               lda #>(SCREEN + MAZE_SCREEN_ROW*40 + MAZE_SCREEN_COL)
+13CE  85 03      3               sta screen_ptr+1
+13D0  A9 00      2               lda #<MAZE_GRID
+13D2  85 04      3               sta grid_ptr
+13D4  A9 38      2               lda #>MAZE_GRID
+13D6  85 05      3               sta grid_ptr+1
+13D8  A2 00      2               ldx #$00
+13DA  A0 00      2               ldy #$00
+13DC  B1 04      5/6             lda (grid_ptr),y
+13DE  91 02      6               sta (screen_ptr),y
+13E0  C8         2               iny
+13E1  C0 26      2               cpy #TILE_COLS
+13E3  D0 F7      2/3/4           bne __local51_col_loop
+13E5  A5 04      3               lda grid_ptr
+13E7  18         2               clc
+13E8  69 26      2               adc #TILE_COLS
+13EA  85 04      3               sta grid_ptr
+13EC  A5 05      3               lda grid_ptr+1
+13EE  69 00      2               adc #$00
+13F0  85 05      3               sta grid_ptr+1
+13F2  A5 02      3               lda screen_ptr
+13F4  18         2               clc
+13F5  69 28      2               adc #40
+13F7  85 02      3               sta screen_ptr
+13F9  A5 03      3               lda screen_ptr+1
+13FB  69 00      2               adc #$00
+13FD  85 03      3               sta screen_ptr+1
+13FF  E8         2               inx
+1400  E0 16      2               cpx #TILE_ROWS
+1402  D0 D6      2/3/4           bne __local51_row_loop
+1404  60         6               rts
+
+Symbol table:
+  BITMAP               = $2000
+  CHAR_C               = $000F
+  CHAR_DIGIT_0         = $0004
+  CHAR_E               = $0012
+  CHAR_MEM             = $3000
+  CHAR_O               = $0010
+  CHAR_R               = $0011
+  CHAR_S               = $000E
+  CHKIN                = $FFC6
+  CHRIN                = $FFCF
+  CHROUT               = $FFD2
+  CIA1_DDRA            = $DC02
+  CIA1_DDRB            = $DC03
+  CIA1_PRA             = $DC00
+  CIA1_PRB             = $DC01
+  CIA2_DDRA            = $DD02
+  CIA2_PRA             = $DD00
+  CLOSE                = $FFC3
+  CLRCHN               = $FFCC
+  ENEMY1_COLOR         = $0002
+  ENEMY1_START_COL     = $0005
+  ENEMY1_START_ROW     = $0001
+  ENEMY2_COLOR         = $0004
+  ENEMY2_START_COL     = $0020
+  ENEMY2_START_ROW     = $0001
+  ENEMY_EATEN_SCORE    = $00C8
+  ENEMY_THROTTLE_MASK  = $0003
+  ENEMY_THROTTLE_SKIP_FRAME = $0003
+  FRIGHTENED_COLOR     = $000E
+  FRIGHTENED_THROTTLE_MASK = $0001
+  FRIGHTENED_THROTTLE_SKIP_FRAME = $0001
+  KEY_0_CODE           = $0023
+  KEY_0_COL            = $00EF
+  KEY_0_ROW            = $0008
+  KEY_1_CODE           = $0038
+  KEY_1_COL            = $007F
+  KEY_1_ROW            = $0001
+  KEY_2_CODE           = $003B
+  KEY_2_COL            = $007F
+  KEY_2_ROW            = $0008
+  KEY_3_CODE           = $0008
+  KEY_3_COL            = $00FD
+  KEY_3_ROW            = $0001
+  KEY_4_CODE           = $000B
+  KEY_4_COL            = $00FD
+  KEY_4_ROW            = $0008
+  KEY_5_CODE           = $0010
+  KEY_5_COL            = $00FB
+  KEY_5_ROW            = $0001
+  KEY_6_CODE           = $0013
+  KEY_6_COL            = $00FB
+  KEY_6_ROW            = $0008
+  KEY_7_CODE           = $0018
+  KEY_7_COL            = $00F7
+  KEY_7_ROW            = $0001
+  KEY_8_CODE           = $001B
+  KEY_8_COL            = $00F7
+  KEY_8_ROW            = $0008
+  KEY_9_CODE           = $0020
+  KEY_9_COL            = $00EF
+  KEY_9_ROW            = $0001
+  KEY_ASTERISK_CODE    = $0031
+  KEY_ASTERISK_COL     = $00BF
+  KEY_ASTERISK_ROW     = $0002
+  KEY_AT_CODE          = $002E
+  KEY_AT_COL           = $00DF
+  KEY_AT_ROW           = $0040
+  KEY_A_CODE           = $000A
+  KEY_A_COL            = $00FD
+  KEY_A_ROW            = $0004
+  KEY_B_CODE           = $001C
+  KEY_B_COL            = $00F7
+  KEY_B_ROW            = $0010
+  KEY_COLON_CODE       = $002D
+  KEY_COLON_COL        = $00DF
+  KEY_COLON_ROW        = $0020
+  KEY_COMMA_CODE       = $002F
+  KEY_COMMA_COL        = $00DF
+  KEY_COMMA_ROW        = $0080
+  KEY_COMMODORE_CODE   = $003D
+  KEY_COMMODORE_COL    = $007F
+  KEY_COMMODORE_ROW    = $0020
+  KEY_CRSR_LR_CODE     = $0002
+  KEY_CRSR_LR_COL      = $00FE
+  KEY_CRSR_LR_ROW      = $0004
+  KEY_CRSR_UD_CODE     = $0007
+  KEY_CRSR_UD_COL      = $00FE
+  KEY_CRSR_UD_ROW      = $0080
+  KEY_CTRL_CODE        = $003A
+  KEY_CTRL_COL         = $007F
+  KEY_CTRL_ROW         = $0004
+  KEY_C_CODE           = $0014
+  KEY_C_COL            = $00FB
+  KEY_C_ROW            = $0010
+  KEY_DEL_CODE         = $0000
+  KEY_DEL_COL          = $00FE
+  KEY_DEL_ROW          = $0001
+  KEY_D_CODE           = $0012
+  KEY_D_COL            = $00FB
+  KEY_D_ROW            = $0004
+  KEY_EQUALS_CODE      = $0035
+  KEY_EQUALS_COL       = $00BF
+  KEY_EQUALS_ROW       = $0020
+  KEY_E_CODE           = $000E
+  KEY_E_COL            = $00FD
+  KEY_E_ROW            = $0040
+  KEY_F1_CODE          = $0004
+  KEY_F1_COL           = $00FE
+  KEY_F1_ROW           = $0010
+  KEY_F3_CODE          = $0005
+  KEY_F3_COL           = $00FE
+  KEY_F3_ROW           = $0020
+  KEY_F5_CODE          = $0006
+  KEY_F5_COL           = $00FE
+  KEY_F5_ROW           = $0040
+  KEY_F7_CODE          = $0003
+  KEY_F7_COL           = $00FE
+  KEY_F7_ROW           = $0008
+  KEY_F_CODE           = $0015
+  KEY_F_COL            = $00FB
+  KEY_F_ROW            = $0020
+  KEY_G_CODE           = $001A
+  KEY_G_COL            = $00F7
+  KEY_G_ROW            = $0004
+  KEY_HOME_CODE        = $0033
+  KEY_HOME_COL         = $00BF
+  KEY_HOME_ROW         = $0008
+  KEY_H_CODE           = $001D
+  KEY_H_COL            = $00F7
+  KEY_H_ROW            = $0020
+  KEY_I_CODE           = $0021
+  KEY_I_COL            = $00EF
+  KEY_I_ROW            = $0002
+  KEY_J_CODE           = $0022
+  KEY_J_COL            = $00EF
+  KEY_J_ROW            = $0004
+  KEY_K_CODE           = $0025
+  KEY_K_COL            = $00EF
+  KEY_K_ROW            = $0020
+  KEY_LEFTARROW_CODE   = $0039
+  KEY_LEFTARROW_COL    = $007F
+  KEY_LEFTARROW_ROW    = $0002
+  KEY_LSHIFT_CODE      = $000F
+  KEY_LSHIFT_COL       = $00FD
+  KEY_LSHIFT_ROW       = $0080
+  KEY_L_CODE           = $002A
+  KEY_L_COL            = $00DF
+  KEY_L_ROW            = $0004
+  KEY_MINUS_CODE       = $002B
+  KEY_MINUS_COL        = $00DF
+  KEY_MINUS_ROW        = $0008
+  KEY_M_CODE           = $0024
+  KEY_M_COL            = $00EF
+  KEY_M_ROW            = $0010
+  KEY_N_CODE           = $0027
+  KEY_N_COL            = $00EF
+  KEY_N_ROW            = $0080
+  KEY_O_CODE           = $0026
+  KEY_O_COL            = $00EF
+  KEY_O_ROW            = $0040
+  KEY_PERIOD_CODE      = $002C
+  KEY_PERIOD_COL       = $00DF
+  KEY_PERIOD_ROW       = $0010
+  KEY_PLUS_CODE        = $0028
+  KEY_PLUS_COL         = $00DF
+  KEY_PLUS_ROW         = $0001
+  KEY_POUND_CODE       = $0030
+  KEY_POUND_COL        = $00BF
+  KEY_POUND_ROW        = $0001
+  KEY_P_CODE           = $0029
+  KEY_P_COL            = $00DF
+  KEY_P_ROW            = $0002
+  KEY_Q_CODE           = $003E
+  KEY_Q_COL            = $007F
+  KEY_Q_ROW            = $0040
+  KEY_RETURN_CODE      = $0001
+  KEY_RETURN_COL       = $00FE
+  KEY_RETURN_ROW       = $0002
+  KEY_RSHIFT_CODE      = $0034
+  KEY_RSHIFT_COL       = $00BF
+  KEY_RSHIFT_ROW       = $0010
+  KEY_RUNSTOP_CODE     = $003F
+  KEY_RUNSTOP_COL      = $007F
+  KEY_RUNSTOP_ROW      = $0080
+  KEY_R_CODE           = $0011
+  KEY_R_COL            = $00FB
+  KEY_R_ROW            = $0002
+  KEY_SEMICOLON_CODE   = $0032
+  KEY_SEMICOLON_COL    = $00BF
+  KEY_SEMICOLON_ROW    = $0004
+  KEY_SLASH_CODE       = $0037
+  KEY_SLASH_COL        = $00BF
+  KEY_SLASH_ROW        = $0080
+  KEY_SPACE_CODE       = $003C
+  KEY_SPACE_COL        = $007F
+  KEY_SPACE_ROW        = $0010
+  KEY_S_CODE           = $000D
+  KEY_S_COL            = $00FD
+  KEY_S_ROW            = $0020
+  KEY_T_CODE           = $0016
+  KEY_T_COL            = $00FB
+  KEY_T_ROW            = $0040
+  KEY_UPARROW_CODE     = $0036
+  KEY_UPARROW_COL      = $00BF
+  KEY_UPARROW_ROW      = $0040
+  KEY_U_CODE           = $001E
+  KEY_U_COL            = $00F7
+  KEY_U_ROW            = $0040
+  KEY_V_CODE           = $001F
+  KEY_V_COL            = $00F7
+  KEY_V_ROW            = $0080
+  KEY_W_CODE           = $0009
+  KEY_W_COL            = $00FD
+  KEY_W_ROW            = $0002
+  KEY_X_CODE           = $0017
+  KEY_X_COL            = $00FB
+  KEY_X_ROW            = $0080
+  KEY_Y_CODE           = $0019
+  KEY_Y_COL            = $00F7
+  KEY_Y_ROW            = $0002
+  KEY_Z_CODE           = $000C
+  KEY_Z_COL            = $00FD
+  KEY_Z_ROW            = $0010
+  LEVEL_FILENAME_LEN   = $000A
+  LEVEL_TITLE_LEN      = $0014
+  MAX_INPUT_LEN        = $0028
+  MAX_WORD_LEN         = $000F
+  MAZE_GRID            = $3800
+  MAZE_ORIGIN_X        = $0020
+  MAZE_ORIGIN_Y        = $003A
+  MAZE_SCREEN_COL      = $0001
+  MAZE_SCREEN_ROW      = $0001
+  MOVE_SPEED           = $0001
+  OPEN                 = $FFC0
+  PELLET_VULNERABLE_DURATION = $0190
+  PLAYER_SPRITE_X_MSB_BIT = $0001
+  READST               = $FFB7
+  SCREEN               = $0400
+  SETLFS               = $FFBA
+  SETNAM               = $FFBD
+  SID_VOLUME           = $D418
+  SPRITE0_COLOR        = $D027
+  SPRITE0_X            = $D000
+  SPRITE0_Y            = $D001
+  SPRITE1_COLOR        = $D028
+  SPRITE2_COLOR        = $D029
+  SPRITE_DATA          = $3B80
+  SPRITE_ENABLE        = $D015
+  SPRITE_PTR0          = $07F8
+  SPRITE_PTR1          = $07F9
+  SPRITE_PTR2          = $07FA
+  SPRITE_SPRITE_COLLISION = $D01E
+  SPRITE_X_EXPAND      = $D01D
+  SPRITE_X_MSB         = $D010
+  SPRITE_Y_EXPAND      = $D017
+  TILE_COLS            = $0026
+  TILE_DOT             = $0002
+  TILE_EMPTY           = $0000
+  TILE_PELLET          = $0003
+  TILE_ROWS            = $0016
+  TILE_WALL            = $0001
+  VIC_BANK_0           = $0003
+  VIC_BANK_1           = $0002
+  VIC_BANK_2           = $0001
+  VIC_BANK_3           = $0000
+  VIC_BG0              = $D021
+  VIC_BORDER           = $D020
+  VIC_CTRL1            = $D011
+  VIC_CTRL2            = $D016
+  VIC_MEMPTRS          = $D018
+  VIC_RASTER           = $D012
+  VOICE1_AD            = $D405
+  VOICE1_CTRL          = $D404
+  VOICE1_FREQ_HI       = $D401
+  VOICE1_FREQ_LO       = $D400
+  VOICE1_SR            = $D406
+  VOICE2_AD            = $D40C
+  VOICE2_CTRL          = $D40B
+  VOICE2_FREQ_HI       = $D408
+  VOICE2_FREQ_LO       = $D407
+  VOICE2_SR            = $D40D
+  VOICE3_AD            = $D413
+  VOICE3_CTRL          = $D412
+  VOICE3_FREQ_HI       = $D40F
+  VOICE3_FREQ_LO       = $D40E
+  VOICE3_SR            = $D414
+  __local10_copy_loop  = $0933
+  __local11_copy_loop  = $097E
+  __local12_done       = $0A2E
+  __local12_enemy2     = $0A1F
+  __local14_out_of_bounds = $0A75
+  __local18_eat_dot    = $0B83
+  __local18_eat_pellet = $0B99
+  __local24_dec_lo     = $0C17
+  __local24_done       = $0C34
+  __local27_do_subtract = $0CE1
+  __local27_done       = $0CF8
+  __local27_loop       = $0CCF
+  __local29_check      = $0DE1
+  __local29_must_be_right = $0DDE
+  __local29_try_down   = $0DCA
+  __local29_try_left   = $0DD4
+  __local30_check      = $0E3B
+  __local30_must_be_right = $0E38
+  __local30_try_down   = $0E24
+  __local30_try_left   = $0E2E
+  __local31_accept     = $0E86
+  __local31_col_positive = $0E4F
+  __local31_not_better = $0E97
+  __local31_row_positive = $0E60
+  __local31_seeking_min = $0E7E
+  __local32_dead_end   = $0EEF
+  __local32_have_direction = $0F12
+  __local32_have_reverse = $0F0F
+  __local32_rev_must_be_right = $0F0D
+  __local32_rev_try_down = $0EFB
+  __local32_rev_try_left = $0F04
+  __local32_skip_down  = $0EC5
+  __local32_skip_left  = $0ED6
+  __local32_skip_right = $0EE7
+  __local32_skip_up    = $0EB4
+  __local33_done       = $0F4C
+  __local33_must_be_right = $0F44
+  __local33_no_borrow  = $0F3E
+  __local33_try_down   = $0F28
+  __local33_try_left   = $0F32
+  __local34_skip_decide = $0F5E
+  __local35_msb_clear  = $0F98
+  __local38_normal_throttle_1 = $100D
+  __local38_normal_throttle_2 = $107B
+  __local38_skip_move_1 = $1025
+  __local38_skip_move_2 = $1093
+  __local38_throttle_check_1 = $1017
+  __local38_throttle_check_2 = $1085
+  __local39_check_enemy2 = $10D1
+  __local39_done       = $10E6
+  __local39_player_caught = $10E3
+  __local3_done        = $0854
+  __local3_loop        = $0845
+  __local40_aligned    = $10FB
+  __local40_check_req_down = $118B
+  __local40_check_req_left = $11A1
+  __local40_check_req_right = $11B7
+  __local40_check_y_aligned = $10F1
+  __local40_direction_set = $11CA
+  __local40_done       = $120C
+  __local40_move_step  = $11D9
+  __local40_must_be_right = $1204
+  __local40_no_borrow  = $11FE
+  __local40_not_a      = $1158
+  __local40_not_d      = $1175
+  __local40_not_s      = $113B
+  __local40_not_w      = $111E
+  __local40_try_down   = $11E8
+  __local40_try_left   = $11F2
+  __local45_msb_clear  = $1239
+  __local48_loop       = $12C3
+  __local49_c_loop     = $12F2
+  __local49_digit_loop = $12D8
+  __local49_e_loop     = $1319
+  __local49_o_loop     = $12FF
+  __local49_r_loop     = $130C
+  __local49_s_loop     = $12E5
+  __local4_end         = $087F
+  __local4_loop        = $086B
+  __local4_skip_spaces = $085E
+  __local4_space       = $087E
+  __local4_start       = $0869
+  __local4_terminate   = $087F
+  __local50_dec_lo     = $13A4
+  __local50_found      = $1350
+  __local50_halt       = $13C5
+  __local50_load_error = $13B8
+  __local50_no_carry   = $139C
+  __local50_tile_loop  = $138A
+  __local50_title_loop = $1368
+  __local51_col_loop   = $13DC
+  __local51_row_loop   = $13DA
+  __local6_col_loop    = $088E
+  __local6_found       = $08B5
+  __local6_next_col    = $08AB
+  __local6_row_loop    = $08A4
+  __local8_clear_screen_loop = $08CE
+  activate_pellet_effect = $0BE8
+  add_dot_score        = $0BB2
+  add_enemy_eaten_score = $0BD6
+  add_pellet_score     = $0BC4
+  can_enemy_move_direction = $0DE7
+  can_move_dir_scratch = $0343
+  can_move_direction   = $0D8D
+  check_eat_dot        = $0B4A
+  check_enemy_collision = $10B5
+  collision_scratch    = $038D
+  compute_row_offset   = $0A78
+  compute_screen_row_offset = $0ADD
+  compute_tile_screen_addr = $0B23
+  consider_enemy_candidate = $0E41
+  decide_enemy_direction = $0E98
+  eat_enemy1           = $0C35
+  eat_enemy2           = $0C81
+  enemy1_direction     = $0373
+  enemy1_frightened    = $0387
+  enemy1_rel_x_hi      = $0371
+  enemy1_rel_x_lo      = $0370
+  enemy1_rel_y         = $0372
+  enemy2_direction     = $0377
+  enemy2_frightened    = $0388
+  enemy2_rel_x_hi      = $0375
+  enemy2_rel_x_lo      = $0374
+  enemy2_rel_y         = $0376
+  enemy_best_direction = $037D
+  enemy_best_dist      = $037E
+  enemy_direction      = $037B
+  enemy_dist_scratch   = $037F
+  enemy_found_candidate = $038A
+  enemy_frightened     = $0389
+  enemy_move_throttle  = $0384
+  enemy_msb_clear_masks = $0FA5
+  enemy_msb_set_masks  = $0FA2
+  enemy_rel_x_hi       = $0379
+  enemy_rel_x_lo       = $0378
+  enemy_rel_y          = $037A
+  enemy_sprite_data    = $1282
+  enemy_sprite_num     = $037C
+  enemy_sprite_x_hi    = $0383
+  enemy_sprite_x_lo    = $0382
+  enemy_throttle_mask_scratch = $038B
+  enemy_throttle_skip_scratch = $038C
+  extract_digit        = $0CCD
+  extract_word         = $085A
+  get_tile             = $0A3F
+  grid_ptr             = $0004
+  init_enemies         = $097C
+  init_sprite          = $0931
+  init_text_characters = $12CF
+  init_tile_characters = $12C1
+  input_buf            = $081B
+  joy_state            = $0340
+  key_col_table        = $0884
+  key_scratch          = $0004
+  level_filename       = $08C0
+  level_title          = $035C
+  load_level           = $132C
+  main_loop            = $0919
+  maze_copy_count_hi   = $034F
+  maze_copy_count_lo   = $034E
+  move_enemy_step      = $0F19
+  pellet_vulnerable_timer_hi = $0386
+  pellet_vulnerable_timer_lo = $0385
+  player_direction     = $033F
+  player_rel_x_hi      = $033D
+  player_rel_x_lo      = $033C
+  player_rel_y         = $033E
+  player_sprite_data   = $1243
+  player_start_col     = $035A
+  player_start_row     = $035B
+  player_tile_col      = $0380
+  player_tile_row      = $0381
+  read_joy2            = $0810
+  read_line            = $0843
+  render_maze          = $13C8
+  render_score         = $0CFA
+  reset_enemy_to_start = $0A06
+  row_offset_hi        = $0349
+  row_offset_lo        = $0348
+  row_times2_hi        = $034B
+  row_times2_lo        = $034A
+  row_times4_hi        = $034D
+  row_times4_lo        = $034C
+  score_hi             = $0351
+  score_lo             = $0350
+  score_scratch_hi     = $0353
+  score_scratch_lo     = $0352
+  screen_ptr           = $0002
+  screen_row_offset_hi = $0357
+  screen_row_offset_lo = $0356
+  screen_row_times8_hi = $0359
+  screen_row_times8_lo = $0358
+  sprite_x_hi          = $0347
+  sprite_x_lo          = $0346
+  start                = $08CA
+  start_enemy_vulnerability = $0BEC
+  subtract_amount_hi   = $0355
+  subtract_amount_lo   = $0354
+  tile_bitmaps         = $1405
+  tile_col             = $0341
+  tile_row             = $0342
+  update_enemies       = $0FA8
+  update_enemy_ai_and_move = $0F4D
+  update_enemy_sprite_position = $0F62
+  update_player        = $10E7
+  update_sprite_position = $120D
+  update_vulnerability_timer = $0C07
+  wait_any_key         = $088C
+  wait_frame           = $0A37
+  word_dest_ptr        = $0004
+  x_shift_hi           = $0345
+  x_shift_lo           = $0344

@@ -442,6 +442,8 @@ Symbol table:
   CIA1_DDRB            = $DC03
   CIA1_PRA             = $DC00
   CIA1_PRB             = $DC01
+  CIA2_DDRA            = $DD02
+  CIA2_PRA             = $DD00
   CLEARING             = $0000
   COTTAGE              = $0002
   DARK_CAVE            = $0004
@@ -469,6 +471,10 @@ Symbol table:
   SPRITE_X_MSB         = $D010
   SPRITE_Y_EXPAND      = $D017
   TREASURE             = $0002
+  VIC_BANK_0           = $0003
+  VIC_BANK_1           = $0002
+  VIC_BANK_2           = $0001
+  VIC_BANK_3           = $0000
   VIC_BG0              = $D021
   VIC_BORDER           = $D020
   VIC_CTRL1            = $D011

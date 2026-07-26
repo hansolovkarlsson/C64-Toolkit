@@ -8,6 +8,8 @@ add_label $DC02 .CIA1_DDRA
 add_label $DC03 .CIA1_DDRB
 add_label $DC00 .CIA1_PRA
 add_label $DC01 .CIA1_PRB
+add_label $DD02 .CIA2_DDRA
+add_label $DD00 .CIA2_PRA
 add_label $FFC3 .CLOSE
 add_label $FFCC .CLRCHN
 add_label $FFC0 .OPEN
@@ -24,6 +26,10 @@ add_label $07F8 .SPRITE_PTR0
 add_label $D01D .SPRITE_X_EXPAND
 add_label $D010 .SPRITE_X_MSB
 add_label $D017 .SPRITE_Y_EXPAND
+add_label $0003 .VIC_BANK_0
+add_label $0002 .VIC_BANK_1
+add_label $0001 .VIC_BANK_2
+add_label $0000 .VIC_BANK_3
 add_label $D021 .VIC_BG0
 add_label $D020 .VIC_BORDER
 add_label $D011 .VIC_CTRL1

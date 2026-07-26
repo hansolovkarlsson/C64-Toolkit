@@ -47,7 +47,25 @@ VIC_RASTER  = $d012     ; current raster line (bits 0-7; bit 8 lives in
                           ; VIC_CTRL1, not broken out here since none of
                           ; this project's own code needs lines 256-311)
 VIC_CTRL2   = $d016     ; control register 2: bit 4 = MCM (multicolor mode)
-VIC_MEMPTRS = $d018     ; screen/character (or bitmap) pointer register
+VIC_MEMPTRS = $d018     ; screen/character (or bitmap) pointer register --
+                           ; bits 7-4: screen memory address, as a
+                           ; multiple of $400, relative to the current
+                           ; VIC bank (CIA2_PRA, above); bits 3-1: in
+                           ; character mode, character memory address as
+                           ; a multiple of $800, same relative-to-bank
+                           ; rule (in bitmap mode instead, just bit 3
+                           ; selects between the bank's own two possible
+                           ; $2000 halves); bit 0 unused. In VIC banks 0
+                           ; and 2 specifically, character-memory values
+                           ; 0 and 1 ($0000/$0800 relative to the bank)
+                           ; don't select RAM at all -- the VIC-II sees
+                           ; the character ROM shadowed in there instead,
+                           ; regardless of what's actually written to
+                           ; that RAM. A custom character set in one of
+                           ; those two banks has to live somewhere else
+                           ; in the bank -- $3000 (value 6) is a common,
+                           ; safe choice, and this project's own choice
+                           ; when it needs one.
 VIC_BORDER  = $d020     ; border color
 VIC_BG0     = $d021     ; background color 0
 SPRITE0_X   = $d000     ; sprite 0 X position (low 8 bits)
@@ -91,3 +109,45 @@ CIA1_PRA = $dc00        ; port A: joystick port 2 input, OR keyboard
 CIA1_PRB = $dc01        ; port B: keyboard row input
 CIA1_DDRA = $dc02       ; port A data-direction register
 CIA1_DDRB = $dc03       ; port B data-direction register
+
+; --- CIA #2 (VIC bank select, and the serial/IEC bus disk drives use) ---
+;
+; CIA2_PRA's low 2 bits select which 16KB bank of memory the VIC-II
+; chip can see (screen/character/sprite data must all live within that
+; bank) -- confirmed against multiple independent sources, not just
+; one, given how easy this specific register is to get wrong: the bit
+; pairing is inverted from what the bank numbers might suggest (%11
+; selects bank 0, the lowest address range, not bank 3), and bits 0-1
+; are the only ones this is ever safe to touch.
+;
+; The other 6 bits of this SAME register are the serial/IEC bus lines
+; the KERNAL's own disk I/O (SETLFS/OPEN/CHRIN/CHROUT and so on)
+; depends on -- bit 3 is ATN OUT, bit 4 is CLK OUT, bit 5 is DATA OUT,
+; bit 6 is CLK IN, bit 7 is DATA IN. Writing a full byte here instead
+; of a read-modify-write touching only bits 0-1 doesn't just risk
+; picking the wrong VIC bank -- it can silently break disk access for
+; the rest of the program's run. Always:
+;   lda CIA2_PRA
+;   and #%11111100
+;   ora #%000000xx      ; xx = the desired bank, see VIC_BANK_0..3 below
+;   sta CIA2_PRA
+; Bits 0-1 are already outputs by default after reset, but asserting
+; that explicitly first (ora, never a plain store, for the same reason
+; as above) costs nothing and removes the need to assume it:
+;   lda CIA2_DDRA
+;   ora #%00000011
+;   sta CIA2_DDRA
+CIA2_PRA  = $dd00
+CIA2_DDRA = $dd02
+
+; VIC_BANK_0..3: the bit pattern for CIA2_PRA's low 2 bits (already
+; positioned correctly for a plain ORA -- see the read-modify-write
+; pattern above) to select each of the VIC-II's four 16KB banks. Bank
+; 0 is this project's own default -- it's what a freshly reset C64
+; already has selected, keeping its own screen memory ($0400, this
+; library's own SCREEN constant) exactly where every other demo in
+; this project already expects it.
+VIC_BANK_0 = %00000011   ; $0000-$3FFF
+VIC_BANK_1 = %00000010   ; $4000-$7FFF
+VIC_BANK_2 = %00000001   ; $8000-$BFFF
+VIC_BANK_3 = %00000000   ; $C000-$FFFF
