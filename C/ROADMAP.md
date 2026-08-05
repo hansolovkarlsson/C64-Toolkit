@@ -44,15 +44,72 @@
 
 ## Other language ideas, not yet scheduled
 
+None of these are committed to or ordered against each other - just
+captured so they aren't lost. See `README.md`'s "Not supported yet"
+for the authoritative current boundary; this expands on a few entries
+where there's something specific worth knowing before starting on one.
+
+### Data types
+
 - `enum`
+- `union`
+- `long`/`short` — `int` is currently always exactly 16 bits; there's
+  no smaller or larger integer type.
+- `unsigned` — partially closer than it looks: the unsigned *comparison*
+  routines already exist in the runtime (`__rt_ult16`/`__rt_ugt16`/
+  `__rt_ule16`/`__rt_uge16`, used today only for pointer comparisons,
+  which are inherently unsigned - see `gen_binop()`'s `unsignedCmp` in
+  `codegen_expr.c`), and unsigned division (`__rt_udiv16`) already
+  exists too, as the primitive `__rt_sdivmod16` itself is built on. An
+  actual `unsigned int` type would mainly need `/`/`%`/`>>` to route to
+  the unsigned runtime routines instead of hardcoding the signed ones
+  the way they do now for every `int`, plus wiring up
+  `infer_type()`/`gen_binop()` to know a value is unsigned in the first
+  place. `print.h`'s missing `print_uint()` (see that header's own
+  comment) and `printf`'s missing `%u` would both become fixable once
+  this exists.
+- Floating point (`float`/`double`) — no hardware float on the 6502;
+  this would need a real software float implementation (mantissa/
+  exponent representation, add/sub/mul/div/compare routines) from
+  scratch, a substantially bigger undertaking than anything else on
+  this list.
+- `_Bool`/`bool` — not present, though `int`/`char` already serve as
+  truth values everywhere (`if`/`while`/`&&`/`||` all just test "zero
+  or not"), so this would mostly be a naming/spelling convenience
+  (`stdbool.h`-style) rather than new capability.
+
+### Type system / declarations
+
+- `typedef` — every `struct` variable/parameter currently needs the
+  full `struct Tag` spelled out, no bare `Tag`.
+- Function pointers.
+- Pointer-to-pointer (`int **`).
+- Arrays of pointers.
+- Array *parameters* written with `[]` syntax - `type *name` already
+  receives the identical decayed pointer, so this is a syntax gap, not
+  a capability one.
+- By-value struct parameters and return values (`struct Tag *` only,
+  today) — would need real struct-copying machinery at every call
+  boundary; see `README.md`'s "How structs work" for why that was
+  skipped so far.
+- Struct members that are themselves a struct-by-value or an array.
+- Multi-dimensional arrays.
+- Real variadic user functions (a `...` parameter) — `printf`'s own
+  compile-time-constant format-string restriction is what let it ship
+  without this; see `README.md`'s "How printf works".
+
+### Preprocessor
+
+- `#define`, `#ifdef`/`#ifndef`, and conditional compilation generally
+  — `#include` is the only directive supported today (see `src/cc64.h`'s
+  "HOW #include WORKS").
+
+### Other
+
 - An inline-assembly directive, for dropping raw `c64asm` instructions
   into a `cc64` program directly — useful for the rare hardware access
   pattern (a specific cycle-timed loop, say) that doesn't fit cleanly
   into C.
-- More data types beyond the current `int`/`char`/pointer/`struct` set.
-- Expanded preprocessor directives beyond the current `#include`-only
-  support (see `README.md`'s "Not supported yet" for the full current
-  boundary — no `#define`, no conditional compilation).
 
 ## Tooling ideas
 
