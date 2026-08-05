@@ -1,0 +1,8 @@
+# Build output.
+bin/c64emu
+
+# ROM images (Commodore's copyrighted KERNAL/BASIC/character binaries)
+# - dump your own from a C64 you own, never commit these. See
+# roms/README.md for the expected filenames.
+roms/*
+!roms/README.md
