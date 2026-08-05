@@ -25,10 +25,25 @@ each piece will live.
    for cpu_reset()/BRK/IRQ/NMI/RTI, since Dormann's suite deliberately
    never triggers a real interrupt mid-test and so can't exercise that
    path at all. See `tests/cpu/README.md` for how to run both.
-2. **Memory map + bank switching** - the 64K address space, and the
-   6510 I/O port at `$01` that controls whether BASIC ROM/KERNAL ROM/
-   character ROM or plain RAM is visible in their overlapping address
-   ranges.
+2. ~~**Memory map + bank switching**~~ - done (`src/memory.c`/
+   `src/memory.h`): the 64K RAM array, ROM loading (`roms/README.md`),
+   and the 6510 I/O port at `$00`/`$01` (LORAM/HIRAM/CHAREN) deciding
+   whether BASIC ROM/KERNAL ROM/character ROM/I/O or plain RAM is
+   visible at $A000-$BFFF/$D000-$DFFF/$E000-$FFFF - cross-checked
+   against the full bank-switching mode table (only the 8 rows
+   reachable with no cartridge present; cartridge support isn't
+   planned yet). Two things worth knowing if this is ever touched
+   again: BASIC ROM needs BOTH LORAM and HIRAM set, not LORAM alone
+   (an easy detail to get wrong from memory rather than the actual
+   table); and a write always lands in RAM even when ROM is what's
+   visible for reads at that same address ("write under ROM") -
+   `memory_write()` doesn't special-case the ROM regions at all
+   because of this, it only special-cases $D000-$DFFF when I/O
+   (rather than RAM or character ROM) is what's currently banked in
+   there. VIC-II/SID/CIA don't exist yet, so $D000-$DFFF's I/O mode is
+   currently just an inert placeholder (`IoBus`, unregistered) - see
+   `src/memory.h`. See `tests/memory/README.md` for the regression
+   coverage.
 3. **Minimal GTK4 shell** - a window showing the raw framebuffer and
    nothing else yet (no VIC-II text/graphics modes rendered - just
    proving the CPU+memory core can be driven and displayed from a real

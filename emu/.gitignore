@@ -1,5 +1,8 @@
 # Build output.
 bin/c64emu
+tests/cpu/test_cpu
+tests/cpu/test_interrupts
+tests/memory/test_memory
 
 # ROM images (Commodore's copyrighted KERNAL/BASIC/character binaries)
 # - dump your own from a C64 you own, never commit these. See
@@ -12,5 +15,3 @@ roms/*
 # tests/cpu/README.md.
 tests/cpu/*.bin
 tests/cpu/*.lst
-tests/cpu/test_cpu
-tests/cpu/test_interrupts

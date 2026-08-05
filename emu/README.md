@@ -5,11 +5,14 @@ core, memory/bank-switching, CIA/VIC-II/SID chip emulation, and a
 GTK4 front end — built the same way `asm/` and `C/` were, without
 leaning on an existing emulator core.
 
-**Status:** step 1 of the build order is done - a full legal 6502/6510
-instruction set (`src/cpu.c`), verified against Klaus Dormann's 6502
-functional test suite plus a hand-written interrupt/reset check (see
-`tests/cpu/README.md`). Nothing else exists yet - no memory/banking,
-no display, no GTK. See [`ROADMAP.md`](ROADMAP.md) for what's next.
+**Status:** steps 1-2 of the build order are done - a full legal
+6502/6510 instruction set (`src/cpu.c`, verified against Klaus
+Dormann's 6502 functional test suite plus a hand-written interrupt/
+reset check) and the C64's memory map/bank switching (`src/memory.c`,
+verified against the full mode table with no cartridge present). See
+`tests/cpu/README.md` and `tests/memory/README.md`. Nothing else
+exists yet - no display, no GTK, no CIA/VIC-II/SID (so no keyboard, no
+graphics, no sound). See [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
 
@@ -49,16 +52,16 @@ emu/
 
 ## Building
 
-No `bin/c64emu` yet - there's no memory map, display, or entry point
-to build one around. The CPU core has its own standalone correctness
-gate:
+No `bin/c64emu` yet - there's no display or entry point to build one
+around. Each piece that exists so far has its own standalone
+correctness gate:
 
 ```sh
-cd tests/cpu && make fetch && make run-all
+cd tests/cpu && make fetch && make run-all   # CPU core
+cd tests/memory && make run                  # memory map / bank switching
 ```
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (memory/banking, then a
-minimal GTK4 shell).
+See [`ROADMAP.md`](ROADMAP.md) for what's next (a minimal GTK4 shell).
 
 ## ROM images
 
