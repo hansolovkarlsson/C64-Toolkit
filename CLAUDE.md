@@ -25,6 +25,16 @@ separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
 `c64asm`. A full C -> `.prg` pipeline needs both binaries built, `cc64`
 first.
 
+**Roadmaps**: [`ROADMAP.md`](ROADMAP.md) tracks cross-project direction
+(open questions spanning both subprojects, ideas without an owner yet);
+[`asm/ROADMAP.md`](asm/ROADMAP.md) and [`C/ROADMAP.md`](C/ROADMAP.md)
+track each subproject's own open work. Check the relevant one before
+assuming something is unplanned, already decided, or still missing —
+e.g. `C/ROADMAP.md` has the real next-language-features order for
+`cc64`, and the root `ROADMAP.md` has the still-undecided question of
+whether `cc64`'s future standard library should wrap `asm/lib/` or stay
+independent.
+
 ## Commands
 
 ### `asm/` — the assembler
