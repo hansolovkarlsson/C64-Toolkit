@@ -145,7 +145,8 @@
 
 typedef enum {
     T_EOF, T_IDENT, T_NUM, T_CHARLIT, T_STRLIT,
-    T_INT, T_CHAR, T_VOID, T_STRUCT, T_UNION, T_ENUM, T_TYPEDEF, T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
+    T_INT, T_CHAR, T_VOID, T_STRUCT, T_UNION, T_ENUM, T_TYPEDEF, T_UNSIGNED,
+    T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
     T_BREAK, T_CONTINUE, T_DO, T_SWITCH, T_CASE, T_DEFAULT,
     T_LPAREN, T_RPAREN, T_LBRACE, T_RBRACE, T_LBRACKET, T_RBRACKET,
     T_SEMI, T_COMMA, T_DOT, T_ARROW, T_COLON,
@@ -204,6 +205,7 @@ typedef struct Node {
     int declIsPointer;   /* N_VARDECL: declared as pointer-to-declType */
     int declArrLen;      /* N_VARDECL: 0 = scalar, else array length */
     int declStructTag;   /* N_VARDECL: valid iff declType==TY_STRUCT */
+    int declIsUnsigned;  /* N_VARDECL: only meaningful when declType==TY_INT */
     int line;
 } Node;
 
@@ -227,8 +229,11 @@ typedef struct {
     int type;          /* TY_CHAR, TY_INT, or TY_STRUCT (only valid if isPointer) */
     int isPointer;
     int structTag;      /* valid iff type==TY_STRUCT */
-    int offset;          /* byte offset from the start of the struct */
-    int width;            /* 1 (char) or 2 (int/any pointer) */
+    int isUnsigned;       /* meaningful iff type==TY_INT; for a pointer member,
+                              describes the POINTEE's signedness (see CType's
+                              own comment) */
+    int offset;            /* byte offset from the start of the struct */
+    int width;              /* 1 (char) or 2 (int/any pointer) */
 } StructMember;
 
 /* One `struct Tag { ... };` OR `union Tag { ... };` definition - both
@@ -292,6 +297,8 @@ typedef struct {
     int type;
     int isPointer;
     int structTag;   /* valid iff type==TY_STRUCT */
+    int isUnsigned;    /* meaningful iff type==TY_INT; for a pointer, describes the
+                          POINTEE's signedness (see CType's own comment) */
 } TypedefEntry;
 
 /* A global variable's declared shape. Globals live at a fixed,
@@ -302,6 +309,8 @@ typedef struct {
     int type;         /* TY_CHAR, TY_INT, or TY_STRUCT */
     int isPointer;
     int structTag;     /* valid iff type==TY_STRUCT */
+    int isUnsigned;      /* meaningful iff type==TY_INT; for a pointer, describes
+                            the POINTEE's signedness (see CType's own comment) */
     int isArray;
     int arrLen;
     long initVal;      /* for globals with a constant scalar initializer */
@@ -314,10 +323,15 @@ typedef struct {
     int retType;       /* TY_CHAR, TY_INT, TY_STRUCT, or -1 for void */
     int retIsPointer;
     int retStructTag;   /* valid iff retType==TY_STRUCT */
+    int retIsUnsigned;    /* meaningful iff retType==TY_INT; for a pointer return
+                              type, describes the POINTEE's signedness (see
+                              CType's own comment) */
     int nparams;
     int paramTypes[32];
     int paramIsPointer[32];
     int paramStructTag[32]; /* valid iff paramTypes[i]==TY_STRUCT */
+    int paramIsUnsigned[32]; /* meaningful iff paramTypes[i]==TY_INT; for a pointer
+                                 parameter, describes the POINTEE's signedness */
     char paramNames[32][64];
     int defined;         /* has a body been seen (not just a prototype)? */
 } FnSym;
@@ -329,6 +343,8 @@ typedef struct {
     int type;
     int isPointer;
     int structTag;   /* valid iff type==TY_STRUCT */
+    int isUnsigned;    /* meaningful iff type==TY_INT; for a pointer, describes
+                          the POINTEE's signedness (see CType's own comment) */
     int isArray;
     int arrLen;
     int isParam;
@@ -361,7 +377,7 @@ int find_enum_tag(const char *name); /* 1 if this tag was defined via 'enum Tag 
 TypedefEntry *find_typedef(const char *name);
 int is_builtin(const char *name);
 void register_local(const char *name, int type, int isPointer, int structTag,
-                     int isArray, int arrLen, int isParam, int line);
+                     int isUnsigned, int isArray, int arrLen, int isParam, int line);
 int find_or_create_struct_tag(const char *name); /* index into g_structs, creating an incomplete entry if new */
 StructMember *find_struct_member(int structTag, const char *name, int line); /* fatal()s if not found */
 void require_complete_struct(int structTag, int line); /* fatal()s if the struct has no `{ members }` yet */
@@ -371,8 +387,20 @@ void require_complete_struct(int structTag, int line); /* fatal()s if the struct
  * struct, which one), since that's all pointer arithmetic scaling,
  * struct member resolution, and the light type checks need. Not a
  * full type system - see infer_type()'s own comment in symtab.c for
- * what it deliberately doesn't try to do. */
-typedef struct { int base; int isPointer; int structTag; } CType;
+ * what it deliberately doesn't try to do. `isUnsigned` is meaningful
+ * whenever `base==TY_INT`, pointer or not: for a non-pointer it's the
+ * value's own signedness; for a pointer it's the POINTEE's signedness
+ * (e.g. `unsigned int *p`), carried through so `*p`/`p[i]` come out
+ * unsigned too - the pointer VALUE itself has no signedness concept
+ * (pointer comparisons are unconditionally unsigned regardless of this
+ * flag - see gen_expr_to_R()'s N_BINOP case). `char` is already
+ * unconditionally unsigned on its own (see README.md's "`char` is
+ * unsigned"), so `isUnsigned` is never consulted when `base==TY_CHAR`;
+ * structs have no signedness concept at all. One gap: `&x` doesn't
+ * propagate `x`'s signedness onto the resulting pointer's `isUnsigned`
+ * (see "How unsigned works" in README.md for why this is an accepted
+ * limitation rather than a bug). */
+typedef struct { int base; int isPointer; int structTag; int isUnsigned; } CType;
 
 CType infer_type(Node *n);
 int var_width(int type, int isPointer, int structTag); /* size in bytes, for storage sizing */

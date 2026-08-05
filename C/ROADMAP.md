@@ -78,24 +78,41 @@
    and `tests/union.c` for the regression coverage (including
    overlapping-storage checks in both directions - a wide write read
    back narrow, and a narrow write read back wide).
-9. ~~`typedef`~~ — done, the harder of the two remaining candidates
-   (`unsigned` is still open) but tractable: resolves entirely at
-   parse time, inside `parse_type_prefix()` itself, so - like `enum` -
-   it needed zero codegen changes; the real work was parsing, not
-   codegen. A typedef name is a plain identifier, lexically
-   indistinguishable from a variable/function name, so every place
-   this compiler decides "declaration or expression?" had to start
-   checking the current token's TEXT against the registered-typedef
-   table, not just its KIND - `cur_is_type()` (`src/parser.c`) is that
-   combined check, replacing four separate `is_type_kw(cur()->kind)`
-   call sites. A typedef'd pointer type can't gain an extra `*` at a
-   use site (rejected as pointer-to-pointer, which isn't supported at
-   all). Top-level only, same as struct/union/enum; the underlying type
+9. ~~`typedef`~~ — done, the harder of the first two remaining
+   candidates but tractable: resolves entirely at parse time, inside
+   `parse_type_prefix()` itself, so - like `enum` - it needed zero
+   codegen changes; the real work was parsing, not codegen. A typedef
+   name is a plain identifier, lexically indistinguishable from a
+   variable/function name, so every place this compiler decides
+   "declaration or expression?" had to start checking the current
+   token's TEXT against the registered-typedef table, not just its
+   KIND - `cur_is_type()` (`src/parser.c`) is that combined check,
+   replacing four separate `is_type_kw(cur()->kind)` call sites. A
+   typedef'd pointer type can't gain an extra `*` at a use site
+   (rejected as pointer-to-pointer, which isn't supported at all).
+   Top-level only, same as struct/union/enum; the underlying type
    must already exist as a plain reference, not an inline anonymous
    definition combined with the typedef in one statement (this compiler
    has no anonymous-struct-definition syntax to combine with in the
    first place). See `README.md`'s "How typedef works" for the full
    design and `tests/typedef.c` for the regression coverage.
+10. ~~`unsigned`~~ — done, the hardest of the three candidates this
+    list started with, since it's the one that isn't a pure parse-time
+    substitution: `isUnsigned` is a new flag threaded parallel to
+    `isPointer` through `CType` and every declaration-carrying struct
+    (`GSym`/`LSym`/`StructMember`/`TypedefEntry`/`FnSym`), and `/`, `%`,
+    and `>>` genuinely need to route to a different runtime routine for
+    unsigned operands (`+`/`-`/`*`/`&`/`|`/`^`/`<<`/`==`/`!=` don't -
+    they're bit-pattern-invariant regardless of signedness). Unsigned
+    division/modulo needed no new runtime code - `__rt_udiv16` already
+    existed as the primitive `__rt_sdivmod16` itself is built on, so
+    routing to it was a straight JSR-target swap; unsigned (logical,
+    zero-filling) right shift needed one new routine, `__rt_ushr16`,
+    alongside the existing arithmetic (sign-extending) `__rt_shr16`.
+    `printf`'s `%u` and `print_uint()` (`lib/print.h`) both became
+    possible for the first time. See `README.md`'s "How unsigned
+    works" for the full design and `tests/unsigned.c` for the
+    regression coverage.
 
 ## Other language ideas, not yet scheduled
 
@@ -108,19 +125,6 @@ where there's something specific worth knowing before starting on one.
 
 - `long`/`short` — `int` is currently always exactly 16 bits; there's
   no smaller or larger integer type.
-- `unsigned` — partially closer than it looks: the unsigned *comparison*
-  routines already exist in the runtime (`__rt_ult16`/`__rt_ugt16`/
-  `__rt_ule16`/`__rt_uge16`, used today only for pointer comparisons,
-  which are inherently unsigned - see `gen_binop()`'s `unsignedCmp` in
-  `codegen_expr.c`), and unsigned division (`__rt_udiv16`) already
-  exists too, as the primitive `__rt_sdivmod16` itself is built on. An
-  actual `unsigned int` type would mainly need `/`/`%`/`>>` to route to
-  the unsigned runtime routines instead of hardcoding the signed ones
-  the way they do now for every `int`, plus wiring up
-  `infer_type()`/`gen_binop()` to know a value is unsigned in the first
-  place. `print.h`'s missing `print_uint()` (see that header's own
-  comment) and `printf`'s missing `%u` would both become fixable once
-  this exists.
 - Floating point (`float`/`double`) — no hardware float on the 6502;
   this would need a real software float implementation (mantissa/
   exponent representation, add/sub/mul/div/compare routines) from
@@ -177,11 +181,10 @@ where there's something specific worth knowing before starting on one.
 ## Standard library
 
 Currently: `lib/string.h` (`strlen`/`strcpy`/`strcat`/`strcmp`/`strchr`/
-`memset`/`memcpy`) and `lib/print.h` (`print_int`/`print_hex`/
-`newline` - `printf` itself is a compiler builtin now, not part of this
-header, and needs no `#include` at all) — see `README.md`'s "The
-standard library" for the full API and why `print_uint` is
-deliberately not included.
+`memset`/`memcpy`) and `lib/print.h` (`print_int`/`print_uint`/
+`print_hex`/`newline` - `printf` itself is a compiler builtin now, not
+part of this header, and needs no `#include` at all) — see
+`README.md`'s "The standard library" for the full API.
 
 Wanted, not started: an expanded "BASIC-equivalent" convenience
 library, a graphics library, a sound library. See the root

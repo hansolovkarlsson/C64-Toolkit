@@ -43,6 +43,7 @@ typedef struct {
     int isPointer;       /* only meaningful when !isArray: the scalar itself holds an address */
     int structTag;        /* valid iff type==TY_STRUCT && isPointer (a pointer-to-struct variable) */
     int offset;            /* only meaningful when isArray: byte offset added to __zpAP (0 except for a struct member reached through a pointer or array - see N_MEMBER in resolve_lvalue_base()) */
+    int isUnsigned;      /* only meaningful for type==TY_INT && !isPointer - see CType's own comment in cc64.h */
     char label[96];     /* scalar: storage label, possibly "base+N" for a struct member reached directly (unused when isArray) */
 } LVInfo;
 
@@ -138,6 +139,7 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
             lv->type = l->type;
             lv->isPointer = l->isPointer;
             lv->structTag = l->structTag;
+            lv->isUnsigned = l->isUnsigned;
             return;
         }
         GSym *g = find_global(n->name);
@@ -152,6 +154,7 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
         lv->type = g->type;
         lv->isPointer = g->isPointer;
         lv->structTag = g->structTag;
+        lv->isUnsigned = g->isUnsigned;
         return;
     }
     if (n->kind == N_DEREF) {
@@ -165,6 +168,7 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
         lv->isArray = 1;
         lv->type = pt.base;
         lv->structTag = pt.structTag;
+        lv->isUnsigned = pt.isUnsigned;
         return;
     }
     if (n->kind == N_MEMBER) {
@@ -205,6 +209,7 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
             lv->type = m->type;
             lv->isPointer = m->isPointer;
             lv->structTag = m->structTag;
+            lv->isUnsigned = m->isUnsigned;
             return;
         }
 
@@ -225,6 +230,7 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
         lv->type = m->type;
         lv->isPointer = m->isPointer;
         lv->structTag = m->structTag;
+        lv->isUnsigned = m->isUnsigned;
         return;
     }
     if (n->kind == N_INDEX) {
@@ -234,9 +240,9 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
             LSym *l = g_curfn ? find_local(n->a->name) : NULL;
             GSym *g = l ? NULL : find_global(n->a->name);
             if ((l && l->isArray) || (g && g->isArray)) {
-                char base[96]; int elemType, elemStructTag;
-                if (l) { local_label(base, sizeof(base), g_curfn->name, n->a->name); elemType = l->type; elemStructTag = l->structTag; }
-                else   { global_label(base, sizeof(base), n->a->name); elemType = g->type; elemStructTag = g->structTag; }
+                char base[96]; int elemType, elemStructTag, elemIsUnsigned;
+                if (l) { local_label(base, sizeof(base), g_curfn->name, n->a->name); elemType = l->type; elemStructTag = l->structTag; elemIsUnsigned = l->isUnsigned; }
+                else   { global_label(base, sizeof(base), n->a->name); elemType = g->type; elemStructTag = g->structTag; elemIsUnsigned = g->isUnsigned; }
                 gen_expr_to_R(n->b); /* index -> __zpR */
                 emit_scale_index(var_width(elemType, 0, elemStructTag)); /* array elements are
                     never pointers themselves (no arrays-of-pointers), so isPointer=0 here always */
@@ -250,6 +256,7 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
                 lv->isArray = 1;
                 lv->type = elemType;
                 lv->structTag = elemStructTag;
+                lv->isUnsigned = elemIsUnsigned;
                 return;
             }
         }
@@ -274,6 +281,7 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
         lv->isArray = 1;
         lv->type = elemType;
         lv->structTag = pt.structTag;
+        lv->isUnsigned = pt.isUnsigned;
         return;
     }
     fatal(n->line, "expression is not assignable");
@@ -324,13 +332,16 @@ static void gen_lv_store_from_R(LVInfo *lv) {
  * at the top of codegen_runtime.c. Simple arithmetic/bitwise ops are
  * inlined directly (a handful of 6502 instructions each); anything
  * that needs a real algorithm (multiply, divide, comparisons) just
- * calls into the runtime library from codegen_runtime.c. unsignedCmp
- * picks the unsigned comparison routines instead of the signed ones
- * when the caller (gen_expr_to_R's N_BINOP case, below) has determined
- * via infer_type() that a pointer is involved.
- * =================================================================== */
+ * calls into the runtime library from codegen_runtime.c. isUnsigned
+ * picks the unsigned variant of whichever op cares about sign - the 4
+ * comparisons, plus `/`, `%`, and `>>` - instead of the signed one,
+ * whenever the caller (gen_expr_to_R's N_BINOP/N_COMPOUND_ASSIGN cases,
+ * below) has determined via infer_type()/resolve_lvalue_base() that a
+ * pointer or an `unsigned` value is involved. Every other operator
+ * (+, -, *, &, |, ^, <<, ==, !=) is bit-pattern-invariant with respect
+ * to signedness, so isUnsigned is simply ignored for those. */
 
-static void gen_binop(const char *op, int unsignedCmp) {
+static void gen_binop(const char *op, int isUnsigned) {
     if (strcmp(op, "+") == 0) {
         emit("    CLC");
         emit("    LDA __zpR2");
@@ -352,13 +363,13 @@ static void gen_binop(const char *op, int unsignedCmp) {
     } else if (strcmp(op, "*") == 0) {
         emit("    JSR __rt_mul16");
     } else if (strcmp(op, "/") == 0) {
-        emit("    JSR __rt_sdivmod16");
+        emit("    JSR %s", isUnsigned ? "__rt_udiv16" : "__rt_sdivmod16");
         emit("    LDA __zpR2");
         emit("    STA __zpR");
         emit("    LDA __zpR2+1");
         emit("    STA __zpR+1");
     } else if (strcmp(op, "%") == 0) {
-        emit("    JSR __rt_sdivmod16");
+        emit("    JSR %s", isUnsigned ? "__rt_udiv16" : "__rt_sdivmod16");
         emit("    LDA __zpT0");
         emit("    STA __zpR");
         emit("    LDA __zpT0+1");
@@ -387,13 +398,13 @@ static void gen_binop(const char *op, int unsignedCmp) {
     } else if (strcmp(op, "<<") == 0) {
         emit("    JSR __rt_shl16");
     } else if (strcmp(op, ">>") == 0) {
-        emit("    JSR __rt_shr16");
+        emit("    JSR %s", isUnsigned ? "__rt_ushr16" : "__rt_shr16");
     } else if (strcmp(op, "==") == 0) { emit("    JSR __rt_eq16"); }
     else if (strcmp(op, "!=") == 0) { emit("    JSR __rt_ne16"); }
-    else if (strcmp(op, "<") == 0) { emit("    JSR %s", unsignedCmp ? "__rt_ult16" : "__rt_lt16"); }
-    else if (strcmp(op, ">") == 0) { emit("    JSR %s", unsignedCmp ? "__rt_ugt16" : "__rt_gt16"); }
-    else if (strcmp(op, "<=") == 0) { emit("    JSR %s", unsignedCmp ? "__rt_ule16" : "__rt_le16"); }
-    else if (strcmp(op, ">=") == 0) { emit("    JSR %s", unsignedCmp ? "__rt_uge16" : "__rt_ge16"); }
+    else if (strcmp(op, "<") == 0) { emit("    JSR %s", isUnsigned ? "__rt_ult16" : "__rt_lt16"); }
+    else if (strcmp(op, ">") == 0) { emit("    JSR %s", isUnsigned ? "__rt_ugt16" : "__rt_gt16"); }
+    else if (strcmp(op, "<=") == 0) { emit("    JSR %s", isUnsigned ? "__rt_ule16" : "__rt_le16"); }
+    else if (strcmp(op, ">=") == 0) { emit("    JSR %s", isUnsigned ? "__rt_uge16" : "__rt_ge16"); }
     else fatal(0, "internal: unknown operator '%s'", op);
 }
 
@@ -465,9 +476,9 @@ static void gen_printf_call(Node *n) {
         }
         if (*p == '\0')
             fatal(n->line, "printf() format string ends with a bare '%%'");
-        if (*p != 'd' && *p != 'x' && *p != 'c' && *p != 's')
+        if (*p != 'd' && *p != 'u' && *p != 'x' && *p != 'c' && *p != 's')
             fatal(n->line, "printf(): unsupported format specifier '%%%c' "
-                            "(supported: %%d, %%x, %%c, %%s, %%%%)", *p);
+                            "(supported: %%d, %%u, %%x, %%c, %%s, %%%%)", *p);
         if (!arg)
             fatal(n->line, "printf(): not enough arguments for its format string");
         if (*p == 's') {
@@ -484,6 +495,7 @@ static void gen_printf_call(Node *n) {
                                   "argument", *p);
             gen_expr_to_R(arg);
             if (*p == 'd') emit("    JSR __rt_print_int16");
+            else if (*p == 'u') emit("    JSR __rt_print_uint16");
             else if (*p == 'x') emit("    JSR __rt_print_hex16");
             else { /* 'c' */
                 emit("    LDA __zpR");
@@ -721,8 +733,8 @@ void gen_expr_to_R(Node *n) {
              * get its address (see N_ADDR below) is the way to work
              * with it instead - exactly how you'd pass or return one
              * anyway, since structs are pointer-only in this version. */
-            CType t = (l ? (CType){ l->type, l->isPointer, l->structTag }
-                         : (CType){ g->type, g->isPointer, g->structTag });
+            CType t = (l ? (CType){ l->type, l->isPointer, l->structTag, 0 }
+                         : (CType){ g->type, g->isPointer, g->structTag, 0 });
             if (t.base == TY_STRUCT && !t.isPointer)
                 fatal(n->line, "cannot use a struct or union by value here; use & to take its address");
             LVInfo lv; resolve_lvalue_base(n, &lv); gen_lv_load_to_R(&lv);
@@ -867,7 +879,7 @@ void gen_expr_to_R(Node *n) {
                 emit("    ROL __zpR+1");
             }
             emit("    JSR __rt_pop2"); /* __zpR2 = old value, __zpR = rhs value */
-            gen_binop(n->op, 0);
+            gen_binop(n->op, lv.isUnsigned);
             if (lv.isArray) {
                 emit("    JSR __rt_pop2"); /* saved address -> __zpR2 (result stays in __zpR) */
                 emit("    LDA __zpR2");
@@ -941,16 +953,18 @@ void gen_expr_to_R(Node *n) {
                 }
                 /* neither operand is a pointer: fall through below */
             }
-            int unsignedCmp = 0;
-            if (strcmp(op, "<") == 0 || strcmp(op, ">") == 0 || strcmp(op, "<=") == 0 || strcmp(op, ">=") == 0) {
-                CType ta = infer_type(n->a), tb = infer_type(n->b);
-                unsignedCmp = ta.isPointer || tb.isPointer;
-            }
+            /* Only `/`, `%`, `>>`, and the 4 comparisons actually care
+             * about this (see gen_binop()'s own comment) - computing it
+             * unconditionally here rather than only for those ops keeps
+             * this one spot as the single source of truth, instead of
+             * duplicating the "which ops care" list a second time. */
+            CType ta = infer_type(n->a), tb = infer_type(n->b);
+            int isUnsigned = ta.isPointer || tb.isPointer || ta.isUnsigned || tb.isUnsigned;
             gen_expr_to_R(n->a);
             emit("    JSR __rt_push");
             gen_expr_to_R(n->b);
             emit("    JSR __rt_pop2");
-            gen_binop(op, unsignedCmp);
+            gen_binop(op, isUnsigned);
             return;
         }
         case N_LOGAND: {

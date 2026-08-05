@@ -364,6 +364,23 @@ __rt_shr16_loop:
 __rt_shr16_done:
     RTS
  
+__rt_ushr16:
+    LDX __zpR
+    LDA __zpR2
+    STA __zpR
+    LDA __zpR2+1
+    STA __zpR+1
+__rt_ushr16_loop:
+    CPX #0
+    BEQ __rt_ushr16_done
+    CLC
+    ROR __zpR+1
+    ROR __zpR
+    DEX
+    JMP __rt_ushr16_loop
+__rt_ushr16_done:
+    RTS
+ 
 __rt_topetscii:
     LDA __zpR
     CMP #$61
@@ -580,6 +597,43 @@ __rt_pi_printloop:
     JSR __rt_putc
     LDA __rt_pi_ndig
     BNE __rt_pi_printloop
+    RTS
+ 
+__rt_print_uint16:
+    LDA #0
+    STA __rt_pi_ndig
+    LDA __zpR
+    ORA __zpR+1
+    BNE __rt_pu_digloop_init
+    LDA #48
+    JMP __rt_putc
+__rt_pu_digloop_init:
+    LDA __zpR
+    STA __zpR2
+    LDA __zpR+1
+    STA __zpR2+1
+    LDA #10
+    STA __zpR
+    LDA #0
+    STA __zpR+1
+__rt_pu_digloop:
+    JSR __rt_udiv16
+    LDX __rt_pi_ndig
+    LDA __zpT0
+    STA __rt_pbuf,X
+    INC __rt_pi_ndig
+    LDA __zpR2
+    ORA __zpR2+1
+    BNE __rt_pu_digloop
+__rt_pu_printloop:
+    DEC __rt_pi_ndig
+    LDX __rt_pi_ndig
+    LDA __rt_pbuf,X
+    CLC
+    ADC #48
+    JSR __rt_putc
+    LDA __rt_pi_ndig
+    BNE __rt_pu_printloop
     RTS
  
 ; ---- global variables --------------------------------------------
@@ -2109,6 +2163,264 @@ __L50:
 __L49:
     RTS
  
+; ---- function print_uint ---------------------------------------------
+__fn_print_uint_frame:
+__fn_print_uint_v_n:
+    .fill 2, 0
+__fn_print_uint_v_buf:
+    .fill 6, 0
+__fn_print_uint_v_i:
+    .fill 2, 0
+__fn_print_uint_pushframe:
+    LDA __rt_csp
+    STA __zpAP
+    LDA __rt_csp+1
+    STA __zpAP+1
+    LDY #0
+__fn_print_uint_pushfr_loop:
+    LDA __fn_print_uint_frame,Y
+    STA (__zpAP),Y
+    INY
+    CPY #10
+    BNE __fn_print_uint_pushfr_loop
+    CLC
+    LDA __rt_csp
+    ADC #10
+    STA __rt_csp
+    LDA __rt_csp+1
+    ADC #0
+    STA __rt_csp+1
+    JMP __rt_cstack_check
+ 
+__fn_print_uint_popframe:
+    SEC
+    LDA __rt_csp
+    SBC #10
+    STA __rt_csp
+    STA __zpAP
+    LDA __rt_csp+1
+    SBC #0
+    STA __rt_csp+1
+    STA __zpAP+1
+    LDY #0
+__fn_print_uint_popfr_loop:
+    LDA (__zpAP),Y
+    STA __fn_print_uint_frame,Y
+    INY
+    CPY #10
+    BNE __fn_print_uint_popfr_loop
+    RTS
+ 
+__fn_print_uint:
+    LDA __fn_print_uint_v_n
+    STA __zpR
+    LDA __fn_print_uint_v_n+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<0
+    STA __zpR
+    LDA #>0
+    STA __zpR+1
+    JSR __rt_pop2
+    JSR __rt_eq16
+    LDA __zpR
+    ORA __zpR+1
+    BNE __L53
+    JMP __L51
+__L53:
+    LDA #<48
+    STA __zpR
+    LDA #>48
+    STA __zpR+1
+    JSR __rt_topetscii
+    LDA __zpR
+    JSR __CHROUT
+    RTS
+    JMP __L52
+__L51:
+__L52:
+    LDA #<0
+    STA __zpR
+    LDA #>0
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_print_uint_v_i
+    LDA __zpR+1
+    STA __fn_print_uint_v_i+1
+__L54:
+    LDA __fn_print_uint_v_n
+    STA __zpR
+    LDA __fn_print_uint_v_n+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<0
+    STA __zpR
+    LDA #>0
+    STA __zpR+1
+    JSR __rt_pop2
+    JSR __rt_ugt16
+    LDA __zpR
+    ORA __zpR+1
+    BNE __L56
+    JMP __L55
+__L56:
+    LDA __fn_print_uint_v_i
+    STA __zpR
+    LDA __fn_print_uint_v_i+1
+    STA __zpR+1
+    CLC
+    LDA __zpR
+    ADC #<__fn_print_uint_v_buf
+    STA __zpAP
+    LDA __zpR+1
+    ADC #>__fn_print_uint_v_buf
+    STA __zpAP+1
+    LDA __zpAP
+    STA __zpR
+    LDA __zpAP+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA __fn_print_uint_v_n
+    STA __zpR
+    LDA __fn_print_uint_v_n+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<10
+    STA __zpR
+    LDA #>10
+    STA __zpR+1
+    JSR __rt_pop2
+    JSR __rt_udiv16
+    LDA __zpT0
+    STA __zpR
+    LDA __zpT0+1
+    STA __zpR+1
+    JSR __rt_pop2
+    LDA __zpR2
+    STA __zpAP
+    LDA __zpR2+1
+    STA __zpAP+1
+    LDY #0
+    LDA __zpR
+    STA (__zpAP),Y
+    LDA __fn_print_uint_v_n
+    STA __zpR
+    LDA __fn_print_uint_v_n+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<10
+    STA __zpR
+    LDA #>10
+    STA __zpR+1
+    JSR __rt_pop2
+    JSR __rt_udiv16
+    LDA __zpR2
+    STA __zpR
+    LDA __zpR2+1
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_print_uint_v_n
+    LDA __zpR+1
+    STA __fn_print_uint_v_n+1
+    LDA __fn_print_uint_v_i
+    STA __zpR
+    LDA __fn_print_uint_v_i+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<1
+    STA __zpR
+    LDA #>1
+    STA __zpR+1
+    JSR __rt_pop2
+    CLC
+    LDA __zpR2
+    ADC __zpR
+    STA __zpR
+    LDA __zpR2+1
+    ADC __zpR+1
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_print_uint_v_i
+    LDA __zpR+1
+    STA __fn_print_uint_v_i+1
+    JMP __L54
+__L55:
+__L57:
+    LDA __fn_print_uint_v_i
+    STA __zpR
+    LDA __fn_print_uint_v_i+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<0
+    STA __zpR
+    LDA #>0
+    STA __zpR+1
+    JSR __rt_pop2
+    JSR __rt_gt16
+    LDA __zpR
+    ORA __zpR+1
+    BNE __L59
+    JMP __L58
+__L59:
+    LDA __fn_print_uint_v_i
+    STA __zpR
+    LDA __fn_print_uint_v_i+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<1
+    STA __zpR
+    LDA #>1
+    STA __zpR+1
+    JSR __rt_pop2
+    SEC
+    LDA __zpR2
+    SBC __zpR
+    STA __zpR2
+    LDA __zpR2+1
+    SBC __zpR+1
+    STA __zpR+1
+    LDA __zpR2
+    STA __zpR
+    LDA __zpR
+    STA __fn_print_uint_v_i
+    LDA __zpR+1
+    STA __fn_print_uint_v_i+1
+    LDA __fn_print_uint_v_i
+    STA __zpR
+    LDA __fn_print_uint_v_i+1
+    STA __zpR+1
+    CLC
+    LDA __zpR
+    ADC #<__fn_print_uint_v_buf
+    STA __zpAP
+    LDA __zpR+1
+    ADC #>__fn_print_uint_v_buf
+    STA __zpAP+1
+    LDY #0
+    LDA (__zpAP),Y
+    STA __zpR
+    LDA #0
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<48
+    STA __zpR
+    LDA #>48
+    STA __zpR+1
+    JSR __rt_pop2
+    CLC
+    LDA __zpR2
+    ADC __zpR
+    STA __zpR
+    LDA __zpR2+1
+    ADC __zpR+1
+    STA __zpR+1
+    JSR __rt_topetscii
+    LDA __zpR
+    JSR __CHROUT
+    JMP __L57
+__L58:
+    RTS
+ 
 ; ---- function print_hex ---------------------------------------------
 __fn_print_hex_frame:
 __fn_print_hex_v_n:
@@ -2168,7 +2480,7 @@ __fn_print_hex:
     STA __fn_print_hex_v_i
     LDA __zpR+1
     STA __fn_print_hex_v_i+1
-__L51:
+__L60:
     LDA __fn_print_hex_v_i
     STA __zpR
     LDA __fn_print_hex_v_i+1
@@ -2182,9 +2494,9 @@ __L51:
     JSR __rt_ge16
     LDA __zpR
     ORA __zpR+1
-    BNE __L54
-    JMP __L52
-__L54:
+    BNE __L63
+    JMP __L61
+__L63:
     LDA __fn_print_hex_v_i
     STA __zpR
     LDA __fn_print_hex_v_i+1
@@ -2240,9 +2552,9 @@ __L54:
     JSR __rt_lt16
     LDA __zpR
     ORA __zpR+1
-    BNE __L57
-    JMP __L55
-__L57:
+    BNE __L66
+    JMP __L64
+__L66:
     LDA __fn_print_hex_v_digit
     STA __zpR
     LDA __fn_print_hex_v_digit+1
@@ -2263,8 +2575,8 @@ __L57:
     JSR __rt_topetscii
     LDA __zpR
     JSR __CHROUT
-    JMP __L56
-__L55:
+    JMP __L65
+__L64:
     LDA __fn_print_hex_v_digit
     STA __zpR
     LDA __fn_print_hex_v_digit+1
@@ -2300,8 +2612,8 @@ __L55:
     JSR __rt_topetscii
     LDA __zpR
     JSR __CHROUT
-__L56:
-__L53:
+__L65:
+__L62:
     LDA __fn_print_hex_v_i
     STA __zpR
     LDA __fn_print_hex_v_i+1
@@ -2325,8 +2637,8 @@ __L53:
     STA __fn_print_hex_v_i
     LDA __zpR+1
     STA __fn_print_hex_v_i+1
-    JMP __L51
-__L52:
+    JMP __L60
+__L61:
     RTS
  
 ; ---- function newline ---------------------------------------------
@@ -2404,7 +2716,7 @@ __fn_count_matching:
     STA __fn_count_matching_v_n
     LDA __zpR+1
     STA __fn_count_matching_v_n+1
-__L58:
+__L67:
     LDA __fn_count_matching_v_a
     STA __zpR
     LDA __fn_count_matching_v_a+1
@@ -2420,9 +2732,9 @@ __L58:
     STA __zpR+1
     LDA __zpR
     ORA __zpR+1
-    BNE __L62
-    JMP __L60
-__L62:
+    BNE __L71
+    JMP __L69
+__L71:
     LDA __fn_count_matching_v_b
     STA __zpR
     LDA __fn_count_matching_v_b+1
@@ -2438,24 +2750,24 @@ __L62:
     STA __zpR+1
     LDA __zpR
     ORA __zpR+1
-    BNE __L63
-    JMP __L60
-__L63:
+    BNE __L72
+    JMP __L69
+__L72:
     LDA #1
     STA __zpR
     LDA #0
     STA __zpR+1
-    JMP __L61
-__L60:
+    JMP __L70
+__L69:
     LDA #0
     STA __zpR
     STA __zpR+1
-__L61:
+__L70:
     LDA __zpR
     ORA __zpR+1
-    BNE __L64
-    JMP __L59
-__L64:
+    BNE __L73
+    JMP __L68
+__L73:
     LDA __fn_count_matching_v_a
     STA __zpR
     LDA __fn_count_matching_v_a+1
@@ -2487,9 +2799,9 @@ __L64:
     JSR __rt_eq16
     LDA __zpR
     ORA __zpR+1
-    BNE __L67
-    JMP __L65
-__L67:
+    BNE __L76
+    JMP __L74
+__L76:
     LDA __fn_count_matching_v_n
     STA __zpR
     LDA __fn_count_matching_v_n+1
@@ -2511,9 +2823,9 @@ __L67:
     STA __fn_count_matching_v_n
     LDA __zpR+1
     STA __fn_count_matching_v_n+1
-    JMP __L66
-__L65:
-__L66:
+    JMP __L75
+__L74:
+__L75:
     LDA __fn_count_matching_v_a
     STA __zpR
     LDA __fn_count_matching_v_a+1
@@ -2556,8 +2868,8 @@ __L66:
     STA __fn_count_matching_v_b
     LDA __zpR+1
     STA __fn_count_matching_v_b+1
-    JMP __L58
-__L59:
+    JMP __L67
+__L68:
     LDA __fn_count_matching_v_n
     STA __zpR
     LDA __fn_count_matching_v_n+1

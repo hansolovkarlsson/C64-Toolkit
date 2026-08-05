@@ -105,7 +105,7 @@ int is_builtin(const char *name) {
 }
 
 void register_local(const char *name, int type, int isPointer, int structTag,
-                     int isArray, int arrLen, int isParam, int line) {
+                     int isUnsigned, int isArray, int arrLen, int isParam, int line) {
     if (find_local(name)) fatal(line, "redefinition of '%s'", name);
     if (g_nlocals >= (int)(sizeof(g_locals)/sizeof(g_locals[0])))
         fatal(line, "too many locals in function '%s'", g_curfn->name);
@@ -113,6 +113,7 @@ void register_local(const char *name, int type, int isPointer, int structTag,
     memset(l, 0, sizeof(*l));
     strncpy(l->name, name, sizeof(l->name)-1);
     l->type = type; l->isPointer = isPointer; l->structTag = structTag;
+    l->isUnsigned = isUnsigned;
     l->isArray = isArray; l->arrLen = arrLen; l->isParam = isParam;
 }
 
@@ -202,8 +203,8 @@ void require_complete_struct(int structTag, int line) {
 
 CType infer_type(Node *n) {
     switch (n->kind) {
-        case N_NUM: return (CType){ TY_INT, 0, -1 };
-        case N_STR: return (CType){ TY_CHAR, 1, -1 }; /* string literals are char* values */
+        case N_NUM: return (CType){ TY_INT, 0, -1, 0 };
+        case N_STR: return (CType){ TY_CHAR, 1, -1, 0 }; /* string literals are char* values */
         case N_IDENT: {
             /* Locals shadow globals, so check the current function's
              * locals first - same lookup order gen_expr_to_R() and
@@ -213,21 +214,23 @@ CType infer_type(Node *n) {
              * global. */
             LSym *l = g_curfn ? find_local(n->name) : NULL;
             if (l) {
-                if (l->isArray) return (CType){ l->type, 1, l->structTag }; /* array decays to pointer */
-                return (CType){ l->type, l->isPointer, l->structTag };
+                if (l->isArray) return (CType){ l->type, 1, l->structTag, l->isUnsigned }; /* array decays to pointer */
+                return (CType){ l->type, l->isPointer, l->structTag, l->isUnsigned };
             }
             GSym *g = find_global(n->name);
             if (g) {
-                if (g->isArray) return (CType){ g->type, 1, g->structTag };
-                return (CType){ g->type, g->isPointer, g->structTag };
+                if (g->isArray) return (CType){ g->type, 1, g->structTag, g->isUnsigned };
+                return (CType){ g->type, g->isPointer, g->structTag, g->isUnsigned };
             }
             /* An enum constant isn't stored as a GSym at all (see
              * EnumConst's own comment in cc64.h) - it's just an int
              * value, checked last since locals/globals are far more
-             * common and this keeps their lookup unchanged. */
-            if (find_enum_const(n->name)) return (CType){ TY_INT, 0, -1 };
+             * common and this keeps their lookup unchanged. Always
+             * signed, the same as any other plain integer literal -
+             * there's no `unsigned` form of an enumerator. */
+            if (find_enum_const(n->name)) return (CType){ TY_INT, 0, -1, 0 };
             fatal(n->line, "undeclared identifier '%s'", n->name);
-            return (CType){ TY_INT, 0, -1 }; /* unreachable; fatal() doesn't return */
+            return (CType){ TY_INT, 0, -1, 0 }; /* unreachable; fatal() doesn't return */
         }
         case N_INDEX: {
             /* Indexing always yields a plain scalar or struct in this
@@ -237,7 +240,7 @@ CType infer_type(Node *n) {
              * element - handled the same way a plain struct variable
              * is by anything that consumes this CType). */
             CType base = infer_type(n->a);
-            return (CType){ base.base, 0, base.structTag };
+            return (CType){ base.base, 0, base.structTag, base.isUnsigned };
         }
         case N_MEMBER: {
             CType base = infer_type(n->a);
@@ -245,22 +248,23 @@ CType infer_type(Node *n) {
             if (base.isPointer) fatal(n->line, "internal: N_MEMBER's base should already be dereferenced");
             require_complete_struct(base.structTag, n->line);
             StructMember *m = find_struct_member(base.structTag, n->name, n->line);
-            return (CType){ m->type, m->isPointer, m->structTag };
+            return (CType){ m->type, m->isPointer, m->structTag, m->isUnsigned };
         }
         case N_DEREF: {
             CType base = infer_type(n->a);
             if (!base.isPointer) fatal(n->line, "cannot dereference a non-pointer value");
-            return (CType){ base.base, 0, base.structTag };
+            return (CType){ base.base, 0, base.structTag, base.isUnsigned };
         }
         case N_ADDR: {
             CType base = infer_type(n->a);
-            return (CType){ base.base, 1, base.structTag };
+            return (CType){ base.base, 1, base.structTag, 0 };
         }
         case N_CALL: {
-            if (is_builtin(n->name)) return (CType){ TY_INT, 0, -1 };
+            if (is_builtin(n->name)) return (CType){ TY_INT, 0, -1, 0 };
             FnSym *fn = find_func(n->name);
             if (!fn) fatal(n->line, "call to undeclared function '%s'", n->name);
-            return (CType){ fn->retType < 0 ? TY_INT : fn->retType, fn->retIsPointer, fn->retStructTag };
+            return (CType){ fn->retType < 0 ? TY_INT : fn->retType, fn->retIsPointer,
+                             fn->retStructTag, fn->retIsUnsigned };
         }
         /* Assignment and inc/dec expressions have the type of their
          * target (e.g. `p = q` and `p++` both have p's type). */
@@ -276,17 +280,22 @@ CType infer_type(Node *n) {
              * gen_expr_to_R()'s N_BINOP case in codegen_expr.c
              * actually generates, or expressions like f(s + 1) would
              * be misjudged by the argument type checks. */
+            CType ta = infer_type(n->a), tb = infer_type(n->b);
             if (strcmp(n->op, "+") == 0 || strcmp(n->op, "-") == 0) {
-                CType ta = infer_type(n->a), tb = infer_type(n->b);
                 if (ta.isPointer && tb.isPointer)
-                    return (CType){ TY_INT, 0, -1 }; /* ptr - ptr = element count */
+                    return (CType){ TY_INT, 0, -1, 0 }; /* ptr - ptr = element count */
                 if (ta.isPointer) return ta;
                 if (tb.isPointer) return tb;
             }
-            return (CType){ TY_INT, 0, -1 };
+            /* Neither operand is a pointer here (either op wasn't
+             * +/-, or it was but both sides are plain scalars): the
+             * result is unsigned if either operand is - matching C's
+             * usual-arithmetic-conversions rule that mixing signed and
+             * unsigned yields unsigned. */
+            return (CType){ TY_INT, 0, -1, ta.isUnsigned || tb.isUnsigned };
         }
         default:
-            return (CType){ TY_INT, 0, -1 }; /* logicals, literals, unary -/!/~ */
+            return (CType){ TY_INT, 0, -1, 0 }; /* logicals, literals, unary -/!/~ */
     }
 }
 

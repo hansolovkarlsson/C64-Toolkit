@@ -43,9 +43,18 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   fix to the parser's own "declaration or expression?" decision logic:
   a typedef name is a plain identifier, so every place that used to
   check just the current token's KIND now also checks its TEXT against
-  the registered-typedef table. `unsigned` is the one candidate from
-  that original three-way comparison still open. See `C/README.md`'s
-  "How typedef works".
+  the registered-typedef table. See `C/README.md`'s "How typedef
+  works".
+- `cc64` also picked up `unsigned`/`unsigned int`, the last and hardest
+  of that original three-way comparison - unlike `enum`/`union`/
+  `typedef`, it isn't a pure parse-time substitution: `isUnsigned` is a
+  new flag threaded parallel to `isPointer` through the whole type
+  system, and `/`, `%`, and `>>` genuinely route to a different runtime
+  routine for unsigned operands (unsigned division reused an existing
+  primitive; unsigned right shift needed one small new routine).
+  `printf`'s `%u` and `lib/print.h`'s `print_uint()` both became
+  possible for the first time as a result. See `C/README.md`'s "How
+  unsigned works".
 
 ## Open cross-project questions
 

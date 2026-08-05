@@ -88,8 +88,10 @@ to approach the codebase for the first time:
 
 ## What's supported
 
-- **Types:** `int` (16-bit, signed), `char` (8-bit, **unsigned** - see
-  below), `void`, single-level pointers to any of those (`int *`,
+- **Types:** `int` (16-bit, signed by default, or `unsigned int`/plain
+  `unsigned` - see "How unsigned works" below), `char` (8-bit, **always
+  unsigned** - see below; `unsigned char` is accepted as a synonym but
+  adds nothing), `void`, single-level pointers to any of those (`int *`,
   `char *`, `struct Tag *`), `struct`, `union`, and `enum` (always just
   `int` - see "How enum works" below).
 - **Declarations:** globals and locals, with an optional 1-D array
@@ -424,6 +426,98 @@ statement (`typedef struct { ... } Name;`) - see the "What's supported"
 list above for why (this compiler has no anonymous-struct-definition
 syntax at all, `enum`'s own optional tag aside).
 
+### How unsigned works
+
+`isUnsigned` is a boolean flag threaded through the type system
+**parallel to `isPointer`**, not a new distinct type constant - `CType`
+(`src/cc64.h`) already had `base`+`isPointer` as two orthogonal
+dimensions of one type, so `unsigned` just became a third, matching how
+real C treats it (a qualifier on `int`, not a wholly separate type).
+Every place that already carries a type around - `GSym`, `LSym`,
+`StructMember`, `TypedefEntry`, `FnSym`'s return type and each
+parameter - gained the same `isUnsigned` field, and `register_local()`
+gained a matching parameter.
+
+**Parsing** happens in `parse_type_prefix()` (`src/parser.c`), the same
+shared function `struct`/`typedef`/every other declaration already
+funnels through: an optional leading `unsigned` token is consumed
+first, before the rest of the type; `int`/`char` after it are both
+optional (`unsigned` alone means `unsigned int`, same as real C).
+`unsigned struct Foo`, `unsigned void`, and `unsigned SomeTypedef` are
+all rejected - `isUnsigned` only ever means something for a plain
+`int` (see `CType`'s own comment for why `char` doesn't need it: `char`
+is already unconditionally unsigned on its own, see "`char` is
+unsigned" below).
+
+**Unlike `enum`/`union`/`typedef`, this one isn't a pure parse-time
+substitution** - it genuinely changes what code gets generated for
+four operators. Two categories of ops exist:
+
+- **Bit-pattern-invariant ops** (`+`, `-`, `*`, `&`, `|`, `^`, `<<`,
+  `==`, `!=`) produce the identical result bit pattern whether the
+  operands are signed or unsigned - two's-complement arithmetic doesn't
+  care. These needed zero codegen changes.
+- **Sign-dependent ops** (`/`, `%`, `>>`, and the 4 relational
+  comparisons `<`/`>`/`<=`/`>=`) genuinely compute a different answer
+  depending on signedness. `gen_binop()` (`src/codegen_expr.c`) already
+  had an `unsignedCmp` flag (renamed `isUnsigned`) for the 4
+  comparisons, used until now only for pointer comparisons (which are
+  inherently unsigned); it now also picks the unsigned runtime routine
+  for `/`, `%`, and `>>`. Division and modulo needed no new runtime
+  code at all - `__rt_udiv16` already existed as the unsigned primitive
+  `__rt_sdivmod16` (signed `/`/`%`) is itself built on, with the
+  identical calling convention, so routing to it directly was a
+  straight JSR-target swap. Right shift needed one new routine,
+  `__rt_ushr16` (`src/codegen_runtime.c`) - the existing `__rt_shr16`
+  is arithmetic (sign-extending, via `CMP #$80` before each `ROR`
+  pair), and logical (zero-filling) shift needed its own copy with an
+  unconditional `CLC` in that spot instead.
+
+**Figuring out *which* flag to pass where** is `infer_type()`'s job
+(`src/symtab.c`), the same function every other type question already
+goes through: it grew a 4th `isUnsigned` field to return, propagated
+through variable/member/array/dereference lookups, and its `N_BINOP`
+fallback case now combines both operands' flags (`ta.isUnsigned ||
+tb.isUnsigned`) the same way real C's usual-arithmetic-conversions rule
+does - mix a signed and an unsigned value and the result is unsigned.
+`resolve_lvalue_base()` (`src/codegen_expr.c`) grew the same field on
+its own internal `LVInfo`, so `/=`, `%=`, and `>>=` route correctly
+too. C99's compound-literal rule (an omitted trailing field defaults to
+0) meant most of the *existing* 3-field `(CType){...}` literals
+scattered through `infer_type()` needed no changes at all - only the
+specific cases where `isUnsigned` should propagate a non-zero value
+needed a 4th value added.
+
+**Two narrow, accepted gaps**, matching this compiler's established
+"light type checking, not a full C type system" philosophy (the same
+kind of simplification already made for `enum`/`typedef`): unary `-`/
+`~`/`!` and `&` (address-of) don't track/propagate `isUnsigned` through
+`infer_type()`'s fallback case - the underlying two's-complement bit
+computation for negate/complement is representation-invariant anyway,
+so this only matters in the narrow case where such an expression's
+*result* is used directly as the left or right operand of `/`, `%`,
+`>>`, or a comparison (`(-x) / y` losing `x`'s unsigned-ness, say);
+and `&x` doesn't track the pointee's signedness through the resulting
+pointer type. Both are the same category of gap `N_ADDR` already had
+before this feature (not tracking pointee signedness) and neither
+comes up in ordinary code.
+
+**`printf`'s `%u`** and **`print_uint()`** (`lib/print.h`) both became
+possible for the first time - previously documented as deliberately
+missing (see each's own former comment) because there was no correct
+way to write "divide this bit pattern as if it were unsigned" without
+a real `unsigned` type. `%u` dispatches to a new dedicated
+`__rt_print_uint16` runtime routine (`src/codegen_runtime.c`), modeled
+directly on the existing `__rt_print_int16` minus the negation/sign
+handling, and calling `__rt_udiv16` instead of `__rt_sdivmod16` - kept
+as its own routine, not a call into `print_uint()`, to preserve the
+existing rule that `printf`'s built-in specifiers never require
+`#include <print.h>` (the same reason `%d`/`%x`/`%c` each have their
+own dedicated runtime routines distinct from `print_int()`/
+`print_hex()`). `print_uint()` itself is just ordinary cc64 source,
+the same shape as `print_int()` minus the sign handling, made possible
+now that `unsigned int` exists as a real parameter type.
+
 ### How enum works
 
 `enum [Tag] { NAME [= value], ... };` never creates a real distinct
@@ -550,14 +644,12 @@ at compile time, rather than you writing it out by hand every time.
 Supported specifiers: `%d` (signed decimal - see `print_int()` in
 `lib/print.h`, which this shares its actual digit-collection algorithm
 with, reimplemented directly in 6502 assembly as `__rt_print_int16`
-rather than requiring `#include <print.h>`), `%x` (4 uppercase hex
-digits, same as `print_hex()`), `%c` (one character, PETSCII-converted
-the same way `putchar()` converts its argument), `%s` (a `char*`
-argument, walked the same way `puts()` walks one), and `%%` for a
-literal `%`. **`%u` is deliberately not supported**, for the exact same
-reason `lib/print.h` has no `print_uint()` - see that header's own
-comment for the full explanation of why cc64's signed-only `int` makes
-an unsigned decimal formatter impossible to write correctly. Anything
+rather than requiring `#include <print.h>`), `%u` (unsigned decimal,
+the same relationship to `print_uint()` that `%d` has to `print_int()`
+- see "How unsigned works" below), `%x` (4 uppercase hex digits, same
+as `print_hex()`), `%c` (one character, PETSCII-converted the same way
+`putchar()` converts its argument), `%s` (a `char*` argument, walked
+the same way `puts()` walks one), and `%%` for a literal `%`. Anything
 else (`%f`, width/precision modifiers like `%5d`, `%.2f`) isn't
 supported either - there's no floating point in cc64 at all, and
 nothing else here has ever supported field widths or precision.
@@ -677,17 +769,12 @@ contracts (including "no bounds checking, ever" - the caller is
 responsible for destinations being big enough, exactly like the real
 thing) everywhere cc64's type system allows it.
 
-`lib/print.h`: `print_int` (signed decimal), `print_hex` (4 hex
-digits, the exact bit pattern regardless of sign), and `newline`.
-Deliberately missing: `print_uint`. cc64's `int` is always signed -
-there's no unsigned type and no cast operator - so there's no correct
-way to decimal-print a 16-bit value in the 32768-65535 range using
-cc64's own (always-signed) `/`, `%`, or `<`/`>`; shipping a
-`print_uint` built from ordinary cc64 code would silently misprint
-exactly that range. `print_hex` doesn't have this problem (see its
-comment in `lib/print.h` for why bitwise `&`/`>>` are safe here when
-`/` and `%` aren't) and covers most of the same real need - inspecting
-a raw 16-bit value - so it's the one shipped instead.
+`lib/print.h`: `print_int` (signed decimal), `print_uint` (unsigned
+decimal - the same digit-collection algorithm as `print_int`, minus
+the negation/sign handling; see "How unsigned works" below for why
+this needed a real `unsigned int` type to exist first), `print_hex`
+(4 hex digits, the exact bit pattern regardless of sign), and
+`newline`.
 
 Both headers are **header-only**: `#include` splices their text
 directly into your program (see "HOW #include WORKS" in `src/cc64.h`),
@@ -803,11 +890,23 @@ struct's own by-value-member restriction). Separate error-path checks
 (not part of the passing suite) cover pointer-to-pointer via a
 typedef'd pointer type, redefining a typedef, a typedef colliding with
 a global/function/builtin/enum-constant name, and an array typedef.
+`tests/unsigned.c` covers `unsigned`/`unsigned int` as a global,
+local, typedef'd type, struct member (both direct and through a
+pointer, including compound assignment), array element, and function
+parameter/return type; unsigned `/`/`%` and `>>` against bit patterns
+that would give a different (and wrong) answer if handled as signed
+(each with its expected value worked out by hand in the test's own
+comments); all four unsigned comparisons; and unsigned wraparound past
+0. `print_uint()` (`lib/print.h`) and `printf`'s `%u` are both checked
+too. Separate error-path checks (not part of the passing suite) cover
+`unsigned` combined with `struct`/`union`/`enum`/`void`/a typedef name,
+none of which are valid since `isUnsigned` only ever means something
+for a plain `int` (see "How unsigned works" below).
 
-Run all twelve:
+Run all thirteen:
 
 ```sh
-for f in hello features forward pointers recursion include structs dowhile_switch printf enum union typedef; do
+for f in hello features forward pointers recursion include structs dowhile_switch printf enum union typedef unsigned; do
     ./cc64 tests/$f.c -o tests/$f.asm
     ./c64asm tests/$f.asm -o tests/$f.prg --listing tests/$f.lst
     python3 mini6502.py tests/$f.prg tests/$f.lst

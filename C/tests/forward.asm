@@ -364,6 +364,23 @@ __rt_shr16_loop:
 __rt_shr16_done:
     RTS
  
+__rt_ushr16:
+    LDX __zpR
+    LDA __zpR2
+    STA __zpR
+    LDA __zpR2+1
+    STA __zpR+1
+__rt_ushr16_loop:
+    CPX #0
+    BEQ __rt_ushr16_done
+    CLC
+    ROR __zpR+1
+    ROR __zpR
+    DEX
+    JMP __rt_ushr16_loop
+__rt_ushr16_done:
+    RTS
+ 
 __rt_topetscii:
     LDA __zpR
     CMP #$61
@@ -580,6 +597,43 @@ __rt_pi_printloop:
     JSR __rt_putc
     LDA __rt_pi_ndig
     BNE __rt_pi_printloop
+    RTS
+ 
+__rt_print_uint16:
+    LDA #0
+    STA __rt_pi_ndig
+    LDA __zpR
+    ORA __zpR+1
+    BNE __rt_pu_digloop_init
+    LDA #48
+    JMP __rt_putc
+__rt_pu_digloop_init:
+    LDA __zpR
+    STA __zpR2
+    LDA __zpR+1
+    STA __zpR2+1
+    LDA #10
+    STA __zpR
+    LDA #0
+    STA __zpR+1
+__rt_pu_digloop:
+    JSR __rt_udiv16
+    LDX __rt_pi_ndig
+    LDA __zpT0
+    STA __rt_pbuf,X
+    INC __rt_pi_ndig
+    LDA __zpR2
+    ORA __zpR2+1
+    BNE __rt_pu_digloop
+__rt_pu_printloop:
+    DEC __rt_pi_ndig
+    LDX __rt_pi_ndig
+    LDA __rt_pbuf,X
+    CLC
+    ADC #48
+    JSR __rt_putc
+    LDA __rt_pi_ndig
+    BNE __rt_pu_printloop
     RTS
  
 ; ---- global variables --------------------------------------------

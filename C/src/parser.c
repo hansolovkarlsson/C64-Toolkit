@@ -90,7 +90,7 @@ static Token *expect(TokKind k, const char *what) {
     return advance();
 }
 
-static int is_type_kw(TokKind k) { return k == T_INT || k == T_CHAR || k == T_VOID || k == T_STRUCT || k == T_UNION || k == T_ENUM; }
+static int is_type_kw(TokKind k) { return k == T_INT || k == T_CHAR || k == T_VOID || k == T_STRUCT || k == T_UNION || k == T_ENUM || k == T_UNSIGNED; }
 
 /* Whether the CURRENT token starts a type - a keyword (is_type_kw()
  * above) OR a plain identifier that happens to be a registered
@@ -165,7 +165,41 @@ static int type_from_tok(TokKind k) {
  * pointer-to-pointer check (rejecting `String *sp;`, since this
  * compiler doesn't support pointer-to-pointer at all) rather than
  * letting the shared tail blindly reset *isPointer to 0 first. */
-static void parse_type_prefix(int *type, int *structTag, int *isPointer) {
+static void parse_type_prefix(int *type, int *structTag, int *isPointer, int *isUnsigned) {
+    *isUnsigned = 0;
+    if (check(T_UNSIGNED)) {
+        advance();
+        *isUnsigned = 1;
+        /* `unsigned` alone means `unsigned int`, matching real C - so
+         * `int`/`char` after it are both optional, but nothing else
+         * (struct/union/enum/void/a typedef name) is a valid follow,
+         * since isUnsigned only ever means something for TY_INT (see
+         * CType's own comment in cc64.h) - reject those explicitly
+         * with a clear message rather than letting the caller stumble
+         * into a confusing "expected identifier"/"expected ';'" once
+         * it finds struct/enum/void/the typedef name still sitting
+         * there unconsumed. */
+        if (check(T_STRUCT) || check(T_UNION))
+            fatal(cur()->line, "'unsigned' cannot be combined with '%s'",
+                  check(T_UNION) ? "union" : "struct");
+        if (check(T_ENUM))
+            fatal(cur()->line, "'unsigned' cannot be combined with 'enum'");
+        if (check(T_VOID))
+            fatal(cur()->line, "'unsigned void' is not valid ('void' has no signedness)");
+        if (check(T_IDENT) && find_typedef(cur()->text))
+            fatal(cur()->line, "'unsigned' cannot be combined with typedef name '%s'", cur()->text);
+        if (check(T_INT) || check(T_CHAR)) {
+            *type = type_from_tok(advance()->kind);
+        } else {
+            *type = TY_INT; /* bare 'unsigned' means 'unsigned int'; whatever
+                                token follows (an identifier) is the caller's
+                                to consume, same as a bare 'int' would leave it */
+        }
+        *structTag = -1;
+        *isPointer = 0;
+        if (check(T_STAR)) { *isPointer = 1; advance(); }
+        return;
+    }
     if (check(T_IDENT)) {
         TypedefEntry *td = find_typedef(cur()->text);
         if (td) {
@@ -173,6 +207,7 @@ static void parse_type_prefix(int *type, int *structTag, int *isPointer) {
             *type = td->type;
             *structTag = td->structTag;
             *isPointer = td->isPointer;
+            *isUnsigned = td->isUnsigned;
             if (check(T_STAR)) {
                 if (*isPointer)
                     fatal(cur()->line, "pointer-to-pointer is not supported in this "
@@ -292,8 +327,8 @@ static void parse_struct_or_union_def(int isUnion) {
     int offset = 0;    /* struct: next free byte, accumulating */
     int maxWidth = 0;  /* union: widest member seen so far */
     while (!check(T_RBRACE)) {
-        int mtype, mStructTag, mIsPointer;
-        parse_type_prefix(&mtype, &mStructTag, &mIsPointer);
+        int mtype, mStructTag, mIsPointer, mIsUnsigned;
+        parse_type_prefix(&mtype, &mStructTag, &mIsPointer, &mIsUnsigned);
         if (mtype < 0) fatal(cur()->line, "'void' is not a valid member type");
         if (mtype == TY_STRUCT && !mIsPointer)
             fatal(cur()->line, "%s members must be int, char, or a pointer "
@@ -312,6 +347,7 @@ static void parse_struct_or_union_def(int isUnion) {
         memset(m, 0, sizeof(*m));
         strncpy(m->name, mname, sizeof(m->name)-1);
         m->type = mtype; m->isPointer = mIsPointer; m->structTag = mStructTag;
+        m->isUnsigned = mIsUnsigned;
         m->width = var_width(mtype, mIsPointer, mStructTag); /* always 2 for a pointer
             member - safe even if mStructTag is still incomplete (self/mutual
             reference), since var_width() checks isPointer before ever touching
@@ -443,8 +479,8 @@ static void parse_enum_def(void) {
  * only, same as struct/union/enum). */
 static void parse_typedef_def(void) {
     advance(); /* 'typedef' */
-    int type, structTag, isPointer;
-    parse_type_prefix(&type, &structTag, &isPointer);
+    int type, structTag, isPointer, isUnsigned;
+    parse_type_prefix(&type, &structTag, &isPointer, &isUnsigned);
     if (!check(T_IDENT)) fatal(cur()->line, "expected an identifier after typedef's type");
     Token *nameTok = advance();
     char *name = nameTok->text;
@@ -460,6 +496,7 @@ static void parse_typedef_def(void) {
     TypedefEntry *td = &g_typedefs[g_ntypedefs++];
     strncpy(td->name, name, sizeof(td->name)-1);
     td->type = type; td->isPointer = isPointer; td->structTag = structTag;
+    td->isUnsigned = isUnsigned;
 }
 
 /* One iteration of this loop handles exactly one top-level
@@ -512,8 +549,8 @@ void pass_a(void) {
 
         if (!cur_is_type())
             fatal(cur()->line, "expected type at top level");
-        int rtype, rStructTag, rIsPointer;
-        parse_type_prefix(&rtype, &rStructTag, &rIsPointer);
+        int rtype, rStructTag, rIsPointer, rIsUnsigned;
+        parse_type_prefix(&rtype, &rStructTag, &rIsPointer, &rIsUnsigned);
         if (!check(T_IDENT)) fatal(cur()->line, "expected identifier after type");
         char *name = advance()->text;
         if (is_builtin(name))
@@ -532,6 +569,7 @@ void pass_a(void) {
                 fn->retType = rtype;
                 fn->retIsPointer = rIsPointer;
                 fn->retStructTag = rStructTag;
+                fn->retIsUnsigned = rIsUnsigned;
             }
             if (rtype == TY_STRUCT && !rIsPointer) {
                 const char *kw = g_structs[rStructTag].isUnion ? "union" : "struct";
@@ -546,8 +584,8 @@ void pass_a(void) {
                 for (;;) {
                     if (!cur_is_type())
                         fatal(cur()->line, "expected parameter type");
-                    int ptype, pStructTag, pIsPointer;
-                    parse_type_prefix(&ptype, &pStructTag, &pIsPointer);
+                    int ptype, pStructTag, pIsPointer, pIsUnsigned;
+                    parse_type_prefix(&ptype, &pStructTag, &pIsPointer, &pIsUnsigned);
                     if (ptype < 0) fatal(cur()->line, "void is not a valid parameter type");
                     if (!check(T_IDENT)) fatal(cur()->line, "expected parameter name");
                     char *pname = advance()->text;
@@ -564,6 +602,7 @@ void pass_a(void) {
                     fn->paramTypes[fn->nparams] = ptype;
                     fn->paramIsPointer[fn->nparams] = pIsPointer;
                     fn->paramStructTag[fn->nparams] = pStructTag;
+                    fn->paramIsUnsigned[fn->nparams] = pIsUnsigned;
                     strncpy(fn->paramNames[fn->nparams], pname, 63);
                     fn->nparams++;
                     if (check(T_COMMA)) { advance(); continue; }
@@ -585,6 +624,7 @@ void pass_a(void) {
         g.type = rtype;
         g.isPointer = rIsPointer;
         g.structTag = rStructTag;
+        g.isUnsigned = rIsUnsigned;
         if (check(T_LBRACKET)) {
             if (rIsPointer) fatal(cur()->line, "arrays of pointers are not supported in this version");
             advance();
@@ -882,8 +922,8 @@ static Node *parse_expr(void) { return parse_assign(); }
  * N_VARDECL's case in gen_stmt(), codegen_stmt.c). */
 static Node *parse_vardecl(void) {
     Token *tt = cur();
-    int type, structTag, isPointer;
-    parse_type_prefix(&type, &structTag, &isPointer);
+    int type, structTag, isPointer, isUnsigned;
+    parse_type_prefix(&type, &structTag, &isPointer, &isUnsigned);
     if (type < 0) fatal(tt->line, "'void' is not a valid variable type");
     if (!check(T_IDENT)) fatal(cur()->line, "expected identifier");
     char *name = advance()->text;
@@ -892,6 +932,7 @@ static Node *parse_vardecl(void) {
     n->declType = type;
     n->declIsPointer = isPointer;
     n->declStructTag = structTag;
+    n->declIsUnsigned = isUnsigned;
     if (check(T_LBRACKET)) {
         if (isPointer) fatal(cur()->line, "arrays of pointers are not supported in this version");
         advance();
@@ -912,7 +953,7 @@ static Node *parse_vardecl(void) {
      * statements in the same function refer to it - parse_primary()'s
      * handling of a bare identifier just looks it up via find_local(),
      * which only works if register_local() has already run for it. */
-    register_local(name, n->declType, n->declIsPointer, n->declStructTag,
+    register_local(name, n->declType, n->declIsPointer, n->declStructTag, n->declIsUnsigned,
                     n->declArrLen != 0, n->declArrLen, 0, n->line);
     return n;
 }
@@ -1098,8 +1139,8 @@ void pass_b(void) {
          * rule. */
         if (check(T_TYPEDEF)) {
             advance(); /* 'typedef' */
-            int t, st, ip; /* discarded - already recorded by pass_a() */
-            parse_type_prefix(&t, &st, &ip);
+            int t, st, ip, iu; /* discarded - already recorded by pass_a() */
+            parse_type_prefix(&t, &st, &ip, &iu);
             advance(); /* the new type name */
             expect(T_SEMI, "';'");
             continue;
@@ -1140,8 +1181,16 @@ void pass_b(void) {
          * type can never have an extra '*' written after it at a use
          * site, since that's rejected as pointer-to-pointer back in
          * pass_a() - so there's never a second token to account for
-         * here either) - are just one. */
-        if (check(T_STRUCT) || check(T_UNION) || check(T_ENUM)) { advance(); advance(); } else advance();
+         * here either) - are just one. `unsigned` is one or two: the
+         * keyword alone, or the keyword plus an optional trailing
+         * `int`/`char` - the same shape parse_type_prefix() itself
+         * accepts. */
+        if (check(T_STRUCT) || check(T_UNION) || check(T_ENUM)) { advance(); advance(); }
+        else if (check(T_UNSIGNED)) {
+            advance();
+            if (check(T_INT) || check(T_CHAR)) advance();
+        }
+        else advance();
         if (check(T_STAR)) advance(); /* optional pointer '*'; already validated in pass A */
         char *name = advance()->text; /* ident */
 
@@ -1166,7 +1215,7 @@ void pass_b(void) {
             g_curfn = fn;
             for (int i = 0; i < fn->nparams; i++)
                 register_local(fn->paramNames[i], fn->paramTypes[i], fn->paramIsPointer[i],
-                                fn->paramStructTag[i], 0, 0, 1, 0);
+                                fn->paramStructTag[i], fn->paramIsUnsigned[i], 0, 0, 1, 0);
             Node *body = parse_block();
             emit_function(fn, body);
             g_curfn = NULL;

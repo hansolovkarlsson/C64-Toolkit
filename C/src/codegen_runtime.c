@@ -578,6 +578,27 @@ void emit_runtime(void) {
     emit("__rt_shr16_done:");
     emit("    RTS");
     emit(" ");
+    /* Logical (zero-filling) right shift, for `unsigned int >> n` -
+     * identical to __rt_shr16 above except the bit shifted into the
+     * high byte's top is always 0 (an unconditional CLC before each
+     * ROR pair) instead of a copy of the sign bit. */
+    emit("__rt_ushr16:"); /* __zpR2 >> __zpR -> __zpR (logical) */
+    emit("    LDX __zpR");
+    emit("    LDA __zpR2");
+    emit("    STA __zpR");
+    emit("    LDA __zpR2+1");
+    emit("    STA __zpR+1");
+    emit("__rt_ushr16_loop:");
+    emit("    CPX #0");
+    emit("    BEQ __rt_ushr16_done");
+    emit("    CLC");
+    emit("    ROR __zpR+1");
+    emit("    ROR __zpR");
+    emit("    DEX");
+    emit("    JMP __rt_ushr16_loop");
+    emit("__rt_ushr16_done:");
+    emit("    RTS");
+    emit(" ");
     /* Runtime PETSCII case-mapping, used by both putchar() and puts()
      * (see codegen_expr.c's gen_call()) so that a character computed
      * or read from memory at runtime - not just a compile-time string
@@ -877,6 +898,55 @@ void emit_runtime(void) {
     emit("    JSR __rt_putc");
     emit("    LDA __rt_pi_ndig");
     emit("    BNE __rt_pi_printloop");
+    emit("    RTS");
+    emit(" ");
+
+    /* Prints __zpR as unsigned decimal - the runtime equivalent of
+     * print_uint() in lib/print.h, for printf()'s '%u'. Same digit-
+     * collection/reversal algorithm as __rt_print_int16 just above,
+     * minus all the negation/sign handling (there's no sign), and
+     * dividing by 10 via __rt_udiv16 directly instead of
+     * __rt_sdivmod16 - the same primitive __rt_sdivmod16 itself calls
+     * for a positive dividend, so this is exactly what
+     * __rt_print_int16 already reduces to once a negative value has
+     * been negated. Reuses __rt_pi_ndig/__rt_pbuf, the same scratch
+     * __rt_print_int16 uses - the two are never live at the same
+     * time, since only one of them ever runs per printf() specifier. */
+    emit("__rt_print_uint16:");
+    emit("    LDA #0");
+    emit("    STA __rt_pi_ndig");
+    emit("    LDA __zpR");
+    emit("    ORA __zpR+1");
+    emit("    BNE __rt_pu_digloop_init");
+    emit("    LDA #48"); /* '0' */
+    emit("    JMP __rt_putc");
+    emit("__rt_pu_digloop_init:");
+    emit("    LDA __zpR");
+    emit("    STA __zpR2");
+    emit("    LDA __zpR+1");
+    emit("    STA __zpR2+1");
+    emit("    LDA #10");
+    emit("    STA __zpR");
+    emit("    LDA #0");
+    emit("    STA __zpR+1");
+    emit("__rt_pu_digloop:"); /* __zpR2 (the running value) / 10 -> new __zpR2, digit in __zpT0 */
+    emit("    JSR __rt_udiv16");
+    emit("    LDX __rt_pi_ndig");
+    emit("    LDA __zpT0");
+    emit("    STA __rt_pbuf,X");
+    emit("    INC __rt_pi_ndig");
+    emit("    LDA __zpR2");
+    emit("    ORA __zpR2+1");
+    emit("    BNE __rt_pu_digloop");
+    emit("__rt_pu_printloop:"); /* walk __rt_pbuf backwards: most-significant digit first */
+    emit("    DEC __rt_pi_ndig");
+    emit("    LDX __rt_pi_ndig");
+    emit("    LDA __rt_pbuf,X");
+    emit("    CLC");
+    emit("    ADC #48");
+    emit("    JSR __rt_putc");
+    emit("    LDA __rt_pi_ndig");
+    emit("    BNE __rt_pu_printloop");
     emit("    RTS");
     emit(" ");
 }
