@@ -1,0 +1,20 @@
+# Build artifacts (both asm/ and C/ use a `cc ... src/*.c` C99 build;
+# only the split-source asm/ Makefile leaves intermediate .o files).
+*.o
+
+# asm/Makefile's `examples`/`disk` targets append to these on every
+# run rather than overwriting -- never meant to be committed.
+asm.log
+disk.log
+vice.log
+
+# Python bytecode cache, from running any of this project's .py files
+# (c64asm.py, mini6502.py, the test_*.py suites, ...) directly.
+__pycache__/
+*.pyc
+
+# Editor/OS cruft -- also covered by this machine's global gitignore,
+# but kept here too so a fresh clone on a different machine behaves
+# the same way.
+.DS_Store
+*~
