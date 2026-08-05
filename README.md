@@ -88,7 +88,10 @@ a real C64 to run it.
 - **`.tag`/`.endtag`** — binds a data block to a `.struct` and checks
   automatically that it's really that struct's size (`room_data: .tag
   Room` ... `.endtag`), instead of a manual end-label plus `.assert`
-  each time; see `c64asm-reference.md` §12
+  each time; also checks each individual field's *shape* against the
+  data in its place, catching same-size-but-wrong-shape mistakes (two
+  loose bytes standing in for one `.word` field, say) the size check
+  alone can't; see `c64asm-reference.md` §12
 - **Local labels** (`@label`), scoped between global labels and per
   macro expansion, so loop/branch labels inside a subroutine or macro
   never collide with anything else in the file

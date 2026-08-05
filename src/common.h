@@ -38,6 +38,11 @@
                                          generating an enormous,
                                          memory-exhausting expansion */
 #define MAX_REPEAT_BODY_LINES   200  /* longest '.repeat'/'.dup' body, in lines */
+#define MAX_STRUCTS             256  /* number of distinct '.struct' definitions
+                                         in one file, for '.tag'/'.endtag' field-
+                                         shape checking (macro.c/assembler.c) */
+#define MAX_TAG_FIELDS          256  /* fields in any one '.struct', for the
+                                         same field-shape checking */
 
 #define MAX_FILENAME_LEN 256    /* longest display filename this assembler will
                                     track per line -- deliberately much smaller

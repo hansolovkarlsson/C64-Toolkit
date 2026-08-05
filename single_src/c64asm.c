@@ -1616,6 +1616,69 @@ static int is_valid_ident(const char *s) {
     return 1;
 }
 
+/* One struct field's *shape* -- kind is 'b' (.byte, 1 byte), 'w'
+ * (.word, 2 bytes), or 'o' (.res/.ds/.fill, `size` bytes) -- recorded
+ * alongside the Name.field symbol emit_struct_field() already emits,
+ * purely so '.tag'/'.endtag' (run_pass(), below) can check each
+ * field's shape, not just the struct's total size; see
+ * c64asm-reference.md §12. */
+#define MAX_STRUCTS 256
+#define MAX_TAG_FIELDS 256
+typedef struct {
+    char name[MAX_IDENT];
+    char kind;
+    long size;
+} TagFieldInfo;
+
+typedef struct {
+    char struct_name[MAX_IDENT];
+    TagFieldInfo fields[MAX_TAG_FIELDS];
+    int field_count;
+} StructFieldList;
+
+static StructFieldList g_struct_fields[MAX_STRUCTS];
+static int g_struct_fields_count = 0;
+
+/* Finds (or creates) this struct's field list, resetting it to empty
+ * first -- a struct name reused across two '.struct' blocks means the
+ * second one's Name.field symbols will already fail as
+ * "already defined" via emit_struct_field()'s own '=' pipeline, so
+ * starting fresh here just avoids stale entries from the first
+ * definition leaking into an error message about the second. */
+static StructFieldList *get_struct_field_list(const char *struct_name) {
+    for (int i = 0; i < g_struct_fields_count; i++)
+        if (strcmp(g_struct_fields[i].struct_name, struct_name) == 0) {
+            g_struct_fields[i].field_count = 0;
+            return &g_struct_fields[i];
+        }
+    if (g_struct_fields_count >= MAX_STRUCTS)
+        asm_error(0, NULL, "too many '.struct' definitions (max %d)", MAX_STRUCTS);
+    StructFieldList *e = &g_struct_fields[g_struct_fields_count++];
+    strncpy(e->struct_name, struct_name, sizeof(e->struct_name) - 1);
+    e->struct_name[sizeof(e->struct_name) - 1] = '\0';
+    e->field_count = 0;
+    return e;
+}
+
+static StructFieldList *find_struct_field_list(const char *struct_name) {
+    for (int i = 0; i < g_struct_fields_count; i++)
+        if (strcmp(g_struct_fields[i].struct_name, struct_name) == 0)
+            return &g_struct_fields[i];
+    return NULL;
+}
+
+static void add_tag_field(StructFieldList *list, const char *field_name, char kind, long size,
+                           const char *struct_name, int line_no, const char *raw_line) {
+    if (list->field_count >= MAX_TAG_FIELDS)
+        asm_error(line_no, raw_line, "'.struct %s' has too many fields (max %d)",
+                  struct_name, MAX_TAG_FIELDS);
+    TagFieldInfo *f = &list->fields[list->field_count++];
+    strncpy(f->name, field_name, sizeof(f->name) - 1);
+    f->name[sizeof(f->name) - 1] = '\0';
+    f->kind = kind;
+    f->size = size;
+}
+
 /* Generates one "StructName.field = offset" line and feeds it through
  * macro_process_line() -- the same '=' assignment pipeline an ordinary
  * hand-written constant goes through, so no separate symbol-table
@@ -1644,6 +1707,7 @@ static void emit_struct_field(const char *struct_name, const char *field_name, l
  * field's own line, using the body line's original text. */
 static void expand_struct(StructCapture *s, const char *filename, int line_no) {
     long offset = 0;
+    StructFieldList *field_list = get_struct_field_list(s->name);
     for (int bi = 0; bi < s->body_line_count; bi++) {
         char stripped[MAX_LINE_LEN];
         strncpy(stripped, s->body[bi], sizeof(stripped) - 1); stripped[sizeof(stripped)-1] = '\0';
@@ -1671,6 +1735,8 @@ static void expand_struct(StructCapture *s, const char *filename, int line_no) {
             for (int fi = 0; fi < nfields; fi++) {
                 trim(fields[fi]);
                 emit_struct_field(s->name, fields[fi], offset, filename, line_no, stripped);
+                add_tag_field(field_list, fields[fi], field_size == 2 ? 'w' : 'b', field_size,
+                              s->name, line_no, stripped);
                 offset += field_size;
             }
         } else if (strcmp(lower, ".res") == 0 || strcmp(lower, ".ds") == 0 || strcmp(lower, ".fill") == 0) {
@@ -1688,6 +1754,7 @@ static void expand_struct(StructCapture *s, const char *filename, int line_no) {
              * count, need to be known during this same preprocessing
              * pass, before pass 1 builds a symbol table. */
             emit_struct_field(s->name, args[0], offset, filename, line_no, stripped);
+            add_tag_field(field_list, args[0], 'o', count, s->name, line_no, stripped);
             offset += count;
         } else {
             asm_error(line_no, stripped,
@@ -2636,6 +2703,121 @@ static int cond_frame_active(CondFrame *stack, int idx) {
     return idx < 0 || stack[idx].currently_active;
 }
 
+/* One data unit emitted so far inside the currently-open '.tag' block
+ * -- kind matches TagFieldInfo's ('b'/'w'/'o'), size is its byte
+ * width, line_no/raw are its own source line (not the '.tag' line),
+ * for precise error attribution. Appended by record_tag_unit() below,
+ * compared against the tagged struct's own field list at '.endtag'
+ * by check_tag_field_shapes(). */
+typedef struct {
+    char kind;
+    long size;
+    int line_no;
+    char raw[MAX_LINE_LEN];
+} TagUnit;
+
+#define MAX_TAG_UNITS 4096
+
+/* A module-level static, not a run_pass() local -- at ~1 KB per slot
+ * (MAX_LINE_LEN-sized raw text), MAX_TAG_UNITS of these is a few MB,
+ * too large to put safely on the stack. run_pass() runs its two
+ * passes one at a time, never concurrently, so one shared buffer,
+ * reset to empty at each '.tag', is safe -- the same reasoning
+ * g_lines/symtab/g_listing's own module-level globals already rely
+ * on (see this project's own architecture notes on why). */
+static TagUnit g_tag_units[MAX_TAG_UNITS];
+
+/* Appends one data unit to `units` -- a no-op if `tag_active` is false,
+ * so every data-emitting directive in run_pass() below can call this
+ * unconditionally instead of checking tag_active itself. Silently
+ * drops a unit past MAX_TAG_UNITS rather than erroring -- an
+ * essentially unreachable ceiling (a single '.tag' block emitting
+ * thousands of individual data units) that would rather under-report
+ * a shape mismatch near the very end of a huge block than crash. */
+static void record_tag_unit(int tag_active, int *count, char kind, long size,
+                             int line_no, const char *raw) {
+    if (!tag_active || *count >= MAX_TAG_UNITS) return;
+    TagUnit *u = &g_tag_units[(*count)++];
+    u->kind = kind;
+    u->size = size;
+    u->line_no = line_no;
+    strncpy(u->raw, raw, sizeof(u->raw) - 1);
+    u->raw[sizeof(u->raw) - 1] = '\0';
+}
+
+/* Describes one field's or one data unit's shape for a '.tag'/'.endtag'
+ * shape-mismatch message -- e.g. "a 2-byte '.word' value" or "1 byte
+ * of '.byte'/'.text' data". 'o' (an "other" field/unit -- a
+ * '.res'/'.ds'/'.fill' field, or a data unit that isn't individually
+ * a '.byte'/'.word'/'.text' value: an instruction, '.incbin', '.align'
+ * padding) only has a known byte width, not a more specific shape. */
+static void tag_shape_desc(char kind, long size, char *out, size_t outsz) {
+    if (kind == 'w')
+        snprintf(out, outsz, "a %ld-byte '.word' value", size);
+    else if (kind == 'b')
+        snprintf(out, outsz, "a %ld-byte '.byte'/'.text' value", size);
+    else
+        snprintf(out, outsz, "%ld byte%s of data", size, size == 1 ? "" : "s");
+}
+
+/* Compares each data unit emitted inside a just-closed '.tag' block
+ * against the corresponding field of the struct it's tagged as, one
+ * at a time -- catching a mismatch the total-size check in the
+ * '.endtag' handling just before this call can't: two separate 1-byte
+ * units standing in for one 2-byte '.word' field (or vice versa) come
+ * out to the same total size, so only checking each field's own shape
+ * catches it. Silently does nothing if this struct has no recorded
+ * field list -- true only for a hand-defined 'Name.size' symbol with
+ * no real '.struct' behind it, a case the size check already reports
+ * on its own. */
+static void check_tag_field_shapes(const char *tag_name, TagUnit *units, int unit_count,
+                                    int endtag_line_no, const char *endtag_raw) {
+    StructFieldList *list = find_struct_field_list(tag_name);
+    if (!list) return;
+
+    int shared = list->field_count < unit_count ? list->field_count : unit_count;
+    char fdesc[64], udesc[64];
+    for (int i = 0; i < shared; i++) {
+        TagFieldInfo *f = &list->fields[i];
+        TagUnit *u = &units[i];
+        if (f->kind != u->kind || f->size != u->size) {
+            tag_shape_desc(f->kind, f->size, fdesc, sizeof(fdesc));
+            tag_shape_desc(u->kind, u->size, udesc, sizeof(udesc));
+            asm_error_recoverable(u->line_no, u->raw,
+                "'.tag %s': field '%s' is %s, but the data here is %s",
+                tag_name, f->name, fdesc, udesc);
+        }
+    }
+
+    if (unit_count < list->field_count) {
+        TagFieldInfo *f = &list->fields[shared];
+        int missing = list->field_count - shared;
+        tag_shape_desc(f->kind, f->size, fdesc, sizeof(fdesc));
+        if (missing > 1)
+            asm_error_recoverable(endtag_line_no, endtag_raw,
+                "'.tag %s': field '%s' (%s) has no data, and %d more after it -- "
+                "the tagged block ends too soon", tag_name, f->name, fdesc, missing - 1);
+        else
+            asm_error_recoverable(endtag_line_no, endtag_raw,
+                "'.tag %s': field '%s' (%s) has no data -- the tagged block ends too soon",
+                tag_name, f->name, fdesc);
+    } else if (unit_count > list->field_count) {
+        TagUnit *first_extra = &units[shared];
+        int extra = unit_count - shared;
+        if (extra > 1)
+            asm_error_recoverable(first_extra->line_no, first_extra->raw,
+                "'.tag %s': extra data here (%d data units total) -- '%s' only has "
+                "%d field%s, all already accounted for",
+                tag_name, extra, tag_name, list->field_count,
+                list->field_count == 1 ? "" : "s");
+        else
+            asm_error_recoverable(first_extra->line_no, first_extra->raw,
+                "'.tag %s': extra data here -- '%s' only has %d field%s, all already "
+                "accounted for",
+                tag_name, tag_name, list->field_count, list->field_count == 1 ? "" : "s");
+    }
+}
+
 static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
     long pc = 0x0801;
     long origin = -1;
@@ -2654,6 +2836,10 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                                    so '.endtag' can report an error against
                                    its exact line_no/raw without needing to
                                    copy those strings out in advance */
+    int tag_unit_count = 0;    /* number of g_tag_units entries recorded so
+                                   far inside the currently-open '.tag'
+                                   block -- reset to 0 whenever a '.tag'
+                                   opens; see record_tag_unit() */
 
     for (int li = 0; li < g_line_count; li++) {
         SourceLine *L = &g_lines[li];
@@ -3022,10 +3208,12 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
             } else {
                 target = ((pc + n - 1) / n) * n;
             }
+            long gap = target - pc;
             if (pass_no == 2) {
-                long gap = target - pc;
                 for (long i = 0; i < gap; i++) bb_push(output, 0x00);
             }
+            if (gap > 0)
+                record_tag_unit(tag_active, &tag_unit_count, 'o', gap, L->line_no, L->raw);
             pc = target;
             if (L->has_label) define_symbol(L->label, pc, L->line_no, pass_no, 0, L->raw, li);
             continue;
@@ -3086,6 +3274,7 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
             tag_start_pc = pc;
             tag_start_li = li;
             tag_active = 1;
+            tag_unit_count = 0;
             continue;
         }
 
@@ -3114,6 +3303,11 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                     tag_name, actual_size, actual_size == 1 ? "" : "s",
                     tag_name, size_val, size_val == 1 ? "" : "s");
             }
+            /* The size check above only catches a *total* byte-count
+             * mismatch -- it can't tell two stray .byte values from
+             * one .word field of the same combined width. Check each
+             * field's actual shape too, one at a time. */
+            check_tag_field_shapes(tag_name, g_tag_units, tag_unit_count, L->line_no, L->raw);
             continue;
         }
 
@@ -3129,6 +3323,8 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                     unsigned char buf[MAX_LINE_LEN]; int blen=0;
                     ascii_to_petscii(s, buf, &blen, charset_lower);
                     if (pass_no == 2) bb_push_n(output, buf, blen);
+                    for (int bj = 0; bj < blen; bj++)
+                        record_tag_unit(tag_active, &tag_unit_count, 'b', 1, L->line_no, L->raw);
                     pc += blen;
                 } else {
                     int undef = 0;
@@ -3136,6 +3332,7 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                     if (undef && pass_no == 2)
                         asm_error_recoverable(L->line_no, L->raw, "Undefined symbol in .byte '%s'", a);
                     if (pass_no == 2) bb_push(output, (unsigned char)(v & 0xFF));
+                    record_tag_unit(tag_active, &tag_unit_count, 'b', 1, L->line_no, L->raw);
                     pc += 1;
                 }
             }
@@ -3154,6 +3351,7 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                     bb_push(output, (unsigned char)(v & 0xFF));
                     bb_push(output, (unsigned char)((v >> 8) & 0xFF));
                 }
+                record_tag_unit(tag_active, &tag_unit_count, 'w', 2, L->line_no, L->raw);
                 pc += 2;
             }
             continue;
@@ -3171,6 +3369,8 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                     unsigned char buf[MAX_LINE_LEN]; int blen=0;
                     ascii_to_petscii(s, buf, &blen, charset_lower);
                     if (pass_no == 2) bb_push_n(output, buf, blen);
+                    for (int bj = 0; bj < blen; bj++)
+                        record_tag_unit(tag_active, &tag_unit_count, 'b', 1, L->line_no, L->raw);
                     pc += blen;
                 } else {
                     int undef = 0;
@@ -3178,6 +3378,7 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                     if (undef && pass_no == 2)
                         asm_error_recoverable(L->line_no, L->raw, "Undefined symbol in .text '%s'", a);
                     if (pass_no == 2) bb_push(output, (unsigned char)(v & 0xFF));
+                    record_tag_unit(tag_active, &tag_unit_count, 'b', 1, L->line_no, L->raw);
                     pc += 1;
                 }
             }
@@ -3195,6 +3396,7 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
             if (pass_no == 2) {
                 for (long i = 0; i < count; i++) bb_push(output, (unsigned char)(fill_val & 0xFF));
             }
+            record_tag_unit(tag_active, &tag_unit_count, 'o', count, L->line_no, L->raw);
             pc += count;
             continue;
         }
@@ -3285,6 +3487,7 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                 free(buf);
             }
             fclose(bf);
+            record_tag_unit(tag_active, &tag_unit_count, 'o', length, L->line_no, L->raw);
             pc += length;
             continue;
         }
@@ -3339,6 +3542,8 @@ static long run_pass(int pass_no, ByteBuf *output, long *origin_out) {
                 cycle_str(L->op, mode, cyc_buf, sizeof(cyc_buf));
                 listing_add(entry_pc, L->raw, bytes, nb, cyc_buf);
             }
+            if (size > 0)
+                record_tag_unit(tag_active, &tag_unit_count, 'o', size, L->line_no, L->raw);
             pc += size;
         }
     }

@@ -58,6 +58,50 @@ typedef struct {
 static StructCapture struct_capture_storage;
 static StructCapture *capturing_struct = NULL;
 
+/* Every '.struct' definition's field list (TagFieldInfo/StructFieldList,
+ * declared in macro.h), built by expand_struct() alongside the ordinary
+ * Name.field symbols -- exposed via find_struct_field_list() for
+ * assembler.c's '.tag'/'.endtag' field-shape checking. */
+static StructFieldList g_struct_fields[MAX_STRUCTS];
+static int g_struct_fields_count = 0;
+
+StructFieldList *find_struct_field_list(const char *struct_name) {
+    for (int i = 0; i < g_struct_fields_count; i++)
+        if (strcmp(g_struct_fields[i].struct_name, struct_name) == 0)
+            return &g_struct_fields[i];
+    return NULL;
+}
+
+/* Finds (or creates) `struct_name`'s field list, resetting it to empty
+ * first -- a struct name reused across two '.struct' blocks means the
+ * second one's Name.field symbols will already fail as "already
+ * defined" via emit_struct_field()'s own '=' pipeline, so starting
+ * fresh here just avoids stale entries from the first definition
+ * leaking into an error message about the second. */
+static StructFieldList *get_struct_field_list(const char *struct_name) {
+    StructFieldList *existing = find_struct_field_list(struct_name);
+    if (existing) { existing->field_count = 0; return existing; }
+    if (g_struct_fields_count >= MAX_STRUCTS)
+        asm_error(0, NULL, "too many '.struct' definitions (max %d)", MAX_STRUCTS);
+    StructFieldList *e = &g_struct_fields[g_struct_fields_count++];
+    strncpy(e->struct_name, struct_name, sizeof(e->struct_name) - 1);
+    e->struct_name[sizeof(e->struct_name) - 1] = '\0';
+    e->field_count = 0;
+    return e;
+}
+
+static void add_tag_field(StructFieldList *list, const char *field_name, char kind, long size,
+                           const char *struct_name, int line_no, const char *raw_line) {
+    if (list->field_count >= MAX_TAG_FIELDS)
+        asm_error(line_no, raw_line, "'.struct %s' has too many fields (max %d)",
+                  struct_name, MAX_TAG_FIELDS);
+    TagFieldInfo *f = &list->fields[list->field_count++];
+    strncpy(f->name, field_name, sizeof(f->name) - 1);
+    f->name[sizeof(f->name) - 1] = '\0';
+    f->kind = kind;
+    f->size = size;
+}
+
 /* Not exposed via macro.h -- nothing outside this file needs to look up
  * a macro by name. */
 static MacroDef *find_macro(const char *name) {
@@ -225,6 +269,7 @@ static void emit_struct_field(const char *struct_name, const char *field_name, l
  * field's own line, using the body line's original text. */
 static void expand_struct(StructCapture *s, const char *filename, int line_no) {
     long offset = 0;
+    StructFieldList *field_list = get_struct_field_list(s->name);
     for (int bi = 0; bi < s->body_line_count; bi++) {
         char stripped[MAX_LINE_LEN];
         strncpy(stripped, s->body[bi], sizeof(stripped) - 1); stripped[sizeof(stripped)-1] = '\0';
@@ -252,6 +297,8 @@ static void expand_struct(StructCapture *s, const char *filename, int line_no) {
             for (int fi = 0; fi < nfields; fi++) {
                 trim(fields[fi]);
                 emit_struct_field(s->name, fields[fi], offset, filename, line_no, stripped);
+                add_tag_field(field_list, fields[fi], field_size == 2 ? 'w' : 'b', field_size,
+                              s->name, line_no, stripped);
                 offset += field_size;
             }
         } else if (strcmp(lower, ".res") == 0 || strcmp(lower, ".ds") == 0 || strcmp(lower, ".fill") == 0) {
@@ -269,6 +316,7 @@ static void expand_struct(StructCapture *s, const char *filename, int line_no) {
              * count, need to be known during this same preprocessing
              * pass, before pass 1 builds a symbol table. */
             emit_struct_field(s->name, args[0], offset, filename, line_no, stripped);
+            add_tag_field(field_list, args[0], 'o', count, s->name, line_no, stripped);
             offset += count;
         } else {
             asm_error(line_no, stripped,

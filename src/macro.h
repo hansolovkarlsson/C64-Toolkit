@@ -48,6 +48,40 @@
 #ifndef C64ASM_MACRO_H
 #define C64ASM_MACRO_H
 
+#include "common.h"
+
+/*
+ * One '.struct' field's *shape*, recorded by expand_struct() alongside
+ * the ordinary "Name.field = offset" symbol it already emits -- kind is
+ * 'b' (.byte, 1 byte), 'w' (.word, 2 bytes), or 'o' (.res/.ds/.fill,
+ * `size` bytes). Exposed here (rather than kept static in macro.c)
+ * purely so assembler.c's '.tag'/'.endtag' handling can check each
+ * field's shape, not just the whole struct's total size -- see
+ * c64asm-reference.md §12 and find_struct_field_list() below.
+ */
+typedef struct {
+    char name[MAX_IDENT];
+    char kind;
+    long size;
+} TagFieldInfo;
+
+typedef struct {
+    char struct_name[MAX_IDENT];
+    TagFieldInfo fields[MAX_TAG_FIELDS];
+    int field_count;
+} StructFieldList;
+
+/*
+ * Looks up a '.struct'-defined struct's field list by name, in
+ * declaration order. Returns NULL if `struct_name` was never the
+ * subject of a '.struct'/'.endstruct' block -- true for a
+ * '.tag'-referenced name that doesn't exist at all (already reported
+ * elsewhere, via the missing "Name.size" symbol) and, in principle,
+ * for a hand-defined "Name.size" constant with no real '.struct'
+ * behind it, though that's an unusual thing to write on purpose.
+ */
+StructFieldList *find_struct_field_list(const char *struct_name);
+
 /*
  * Feeds one raw source line through macro processing.
  *

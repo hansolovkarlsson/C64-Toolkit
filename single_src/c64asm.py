@@ -1210,6 +1210,16 @@ class MacroProcessor:
                                           # '.struct' block currently being
                                           # captured, or None -- see
                                           # process_line() and _expand_struct()
+        self.struct_fields = {}   # struct name -> ordered list of
+                                     # (field_name, kind, size) tuples,
+                                     # kind in ('byte', 'word', 'other') --
+                                     # built alongside the Name.field
+                                     # symbols _expand_struct() already
+                                     # emits, purely so '.tag'/'.endtag'
+                                     # (Assembler._pass()) can check each
+                                     # field's *shape*, not just the
+                                     # struct's total size; see
+                                     # c64asm-reference.md §12
         self.expansion_depth = 0
         self.emit = emit
         self.current_scope = 0    # scope 0: everything before the first
@@ -1483,8 +1493,20 @@ class MacroProcessor:
         errors that aren't tied to one specific field declaration (an
         unrecognized directive inside the block, say); a malformed
         individual field declaration's error instead points at that
-        field's own line, using the body line's original text."""
+        field's own line, using the body line's original text.
+
+        Alongside the Name.field symbols, also records each field's
+        *shape* -- ('byte', 1), ('word', 2), or ('other', count) for a
+        '.res'/'.ds'/'.fill' field -- in self.struct_fields[name], in
+        declaration order. Name.field/Name.size (the symbols) are all
+        '.tag'/'.endtag' needed before this existed, for a single
+        struct-instance-sized block; struct_fields is the extra piece
+        '.endtag' (Assembler._pass()) uses to also check that each
+        individual field's data has the right shape, not just that the
+        whole block has the right total size -- see
+        c64asm-reference.md §12."""
         offset = 0
+        fields = []
         for body_line in body:
             stripped = body_line.strip()
             if not stripped:
@@ -1494,7 +1516,9 @@ class MacroProcessor:
             rest = parts[1].strip() if len(parts) > 1 else ''
 
             if directive in ('.byte', '.db', '.word', '.dw'):
-                field_size = 1 if directive in ('.byte', '.db') else 2
+                is_word = directive in ('.word', '.dw')
+                field_size = 2 if is_word else 1
+                field_kind = 'word' if is_word else 'byte'
                 field_names = [p.strip() for p in split_args(rest)] if rest else []
                 if not field_names:
                     raise AsmError(
@@ -1502,6 +1526,7 @@ class MacroProcessor:
                         f"one field name", line_no, stripped)
                 for fname in field_names:
                     self._emit_struct_field(name, fname, offset, filename, line_no, stripped)
+                    fields.append((fname, field_kind, field_size))
                     offset += field_size
             elif directive in ('.res', '.ds', '.fill'):
                 args = [p.strip() for p in split_args(rest)] if rest else []
@@ -1518,6 +1543,7 @@ class MacroProcessor:
                 # .repeat count, need to be known during this same
                 # preprocessing pass, before pass 1 builds a symbol table.
                 self._emit_struct_field(name, fname, offset, filename, line_no, stripped)
+                fields.append((fname, 'other', count))
                 offset += count
             else:
                 raise AsmError(
@@ -1526,6 +1552,7 @@ class MacroProcessor:
                     line_no, stripped)
 
         self._emit_struct_field(name, 'size', offset, filename, line_no, None)
+        self.struct_fields[name] = fields
 
     def _emit_struct_field(self, struct_name, field_name, offset, filename, line_no, raw_line):
         if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', field_name):
@@ -1670,6 +1697,8 @@ class Assembler:
         includes = IncludeProcessor(macros.process_line, lib_dir=lib_dir)
         macros.include_processor = includes   # see MacroProcessor.__init__
         includes.process_file(main_path, None, 0, None)
+        self.struct_fields = macros.struct_fields   # see '.tag'/'.endtag'
+                                                        # handling in _pass()
 
     def assemble(self):
         self._pass(pass_no=1)
@@ -1714,6 +1743,66 @@ class Assembler:
         cond = (val != 0)
         return cond, cond
 
+    @staticmethod
+    def _tag_shape_desc(kind, size):
+        """Describes one field's or one data unit's shape for a
+        '.tag'/'.endtag' shape-mismatch message -- e.g. "a 2-byte
+        '.word' field" or "1 byte of '.byte'/'.text' data". 'other'
+        covers a '.res'/'.ds'/'.fill' field, or a data unit that isn't
+        individually a '.byte'/'.word'/'.text' value (an instruction,
+        '.incbin', '.align' padding, and so on) -- in that case only
+        the byte width is known, not a more specific shape."""
+        plural = "" if size == 1 else "s"
+        if kind == 'word':
+            return f"a {size}-byte '.word' value"
+        if kind == 'byte':
+            return f"a {size}-byte '.byte'/'.text' value"
+        return f"{size} byte{plural} of data"
+
+    def _check_tag_field_shapes(self, tag_name, tag_units, endtag_line_no, endtag_raw):
+        """Compares each data unit emitted inside a just-closed '.tag'
+        block against the corresponding field of the struct it's tagged
+        as, one at a time -- catching a mismatch the total-size check
+        just above this call can't: two separate 1-byte units standing
+        in for one 2-byte '.word' field (or vice versa) come out to the
+        same total size, so only checking each field's own shape
+        catches it. Silently does nothing if this struct has no
+        recorded field list (self.struct_fields) -- true only for a
+        hand-defined 'Name.size' symbol with no real '.struct' behind
+        it, a case the size check above already reports on its own."""
+        fields = self.struct_fields.get(tag_name)
+        if fields is None:
+            return
+
+        shared = min(len(fields), len(tag_units))
+        for i in range(shared):
+            fname, fkind, fsize = fields[i]
+            ukind, usize, uline, uraw = tag_units[i]
+            if fkind != ukind or fsize != usize:
+                record_error(
+                    f"'.tag {tag_name}': field '{fname}' is "
+                    f"{self._tag_shape_desc(fkind, fsize)}, but the data "
+                    f"here is {self._tag_shape_desc(ukind, usize)}",
+                    uline, uraw)
+
+        if len(tag_units) < len(fields):
+            missing = fields[shared:]
+            fname, fkind, fsize = missing[0]
+            more = f", and {len(missing) - 1} more after it" if len(missing) > 1 else ""
+            record_error(
+                f"'.tag {tag_name}': field '{fname}' ({self._tag_shape_desc(fkind, fsize)}) "
+                f"has no data{more} -- the tagged block ends too soon",
+                endtag_line_no, endtag_raw)
+        elif len(tag_units) > len(fields):
+            extra = tag_units[shared:]
+            _, _, first_line, first_raw = extra[0]
+            more = f" ({len(extra)} data units total)" if len(extra) > 1 else ""
+            record_error(
+                f"'.tag {tag_name}': extra data here{more} -- "
+                f"'{tag_name}' only has {len(fields)} field"
+                f"{'' if len(fields) == 1 else 's'}, all already accounted for",
+                first_line, first_raw)
+
     def _pass(self, pass_no):
         pc = 0x0801
         origin = None
@@ -1728,12 +1817,27 @@ class Assembler:
                                       # for a '.tag' block currently open,
                                       # or None -- see '.tag'/'.endtag'
                                       # handling below
+        tag_units = []              # (kind, size, line_no, raw) for each
+                                      # data unit emitted so far inside the
+                                      # currently-open '.tag' block, kind in
+                                      # ('byte', 'word', 'other') -- reset
+                                      # whenever a '.tag' opens, compared
+                                      # field-by-field against
+                                      # self.struct_fields[tag_name] at
+                                      # '.endtag'
 
         def parent_active():
             return not cond_stack or cond_stack[-1].currently_active
 
         def currently_skipping():
             return bool(cond_stack) and not cond_stack[-1].currently_active
+
+        def record_tag_unit(kind, size, unit_line_no, unit_raw):
+            # Only meaningful while a '.tag' block is open -- a no-op
+            # otherwise, so every data-emitting directive below can call
+            # this unconditionally instead of checking tag_active itself.
+            if tag_active is not None:
+                tag_units.append((kind, size, unit_line_no, unit_raw))
 
         for li, (line_no, raw, label, op, operand, filename) in enumerate(self.lines):
             _set_error_file(filename)
@@ -2037,10 +2141,11 @@ class Assembler:
                                    # nonsensical negative gap (n<0)
                 else:
                     target = ((pc + n - 1) // n) * n
-                if pass_no == 2:
-                    gap = target - pc
-                    if gap > 0:
-                        output.extend(b'\x00' * gap)
+                gap = target - pc
+                if pass_no == 2 and gap > 0:
+                    output.extend(b'\x00' * gap)
+                if gap > 0:
+                    record_tag_unit('other', gap, line_no, raw)
                 pc = target
                 if label:
                     self._define_symbol(label, pc, line_no, pass_no, li, raw=raw)
@@ -2096,6 +2201,7 @@ class Assembler:
                         line_no, raw)
                     continue
                 tag_active = (tag_name, pc, line_no, raw)
+                tag_units = []
                 continue
 
             if op == '.endtag':
@@ -2118,6 +2224,16 @@ class Assembler:
                         f"data tagged as '{tag_name}' is {actual_size} "
                         f"byte{a_plural} but {tag_name} is {size_val} "
                         f"byte{s_plural}", line_no, raw)
+                # The size check above only catches a *total* byte-count
+                # mismatch -- it can't tell two stray .byte values from
+                # one .word field of the same combined width, or a .res
+                # field's data from a same-length .fill's. When
+                # struct_fields has this struct's field list (it always
+                # does for a real '.struct', just not for a hand-defined
+                # 'Name.size' symbol with no matching field data -- see
+                # _expand_struct()), check each field's actual *shape*
+                # against the data unit that landed there, one at a time.
+                self._check_tag_field_shapes(tag_name, tag_units, line_no, raw)
                 continue
 
             if op in ('.byte', '.db'):
@@ -2127,6 +2243,8 @@ class Assembler:
                         b = ascii_to_petscii(s, charset_lower)
                         if pass_no == 2:
                             output.extend(b)
+                        for _ in b:
+                            record_tag_unit('byte', 1, line_no, raw)
                         pc += len(b)
                     else:
                         val, undef = eval_expr(a, self.symbols, pc, line_no)
@@ -2134,6 +2252,7 @@ class Assembler:
                             record_error(f"Undefined symbol in .byte '{a}'", line_no, raw)
                         if pass_no == 2:
                             output.append(val & 0xFF)
+                        record_tag_unit('byte', 1, line_no, raw)
                         pc += 1
                 continue
 
@@ -2145,6 +2264,7 @@ class Assembler:
                     if pass_no == 2:
                         output.append(val & 0xFF)
                         output.append((val >> 8) & 0xFF)
+                    record_tag_unit('word', 2, line_no, raw)
                     pc += 2
                 continue
 
@@ -2155,6 +2275,8 @@ class Assembler:
                         b = ascii_to_petscii(s, charset_lower)
                         if pass_no == 2:
                             output.extend(b)
+                        for _ in b:
+                            record_tag_unit('byte', 1, line_no, raw)
                         pc += len(b)
                     else:
                         val, undef = eval_expr(a, self.symbols, pc, line_no)
@@ -2162,6 +2284,7 @@ class Assembler:
                             record_error(f"Undefined symbol in .text '{a}'", line_no, raw)
                         if pass_no == 2:
                             output.append(val & 0xFF)
+                        record_tag_unit('byte', 1, line_no, raw)
                         pc += 1
                 continue
 
@@ -2173,6 +2296,7 @@ class Assembler:
                     fill_val, _ = eval_expr(args[1], self.symbols, pc, line_no)
                 if pass_no == 2:
                     output.extend(bytes([fill_val & 0xFF]) * count)
+                record_tag_unit('other', count, line_no, raw)
                 pc += count
                 continue
 
@@ -2238,6 +2362,7 @@ class Assembler:
                 chunk = data[offset:offset + length]
                 if pass_no == 2:
                     output.extend(chunk)
+                record_tag_unit('other', length, line_no, raw)
                 pc += length
                 continue
 
@@ -2290,6 +2415,8 @@ class Assembler:
                 self.listing.append((entry_pc, raw, output[-size:] if size else b'',
                                       cycle_str(mnemonic, mode)))
 
+            if size > 0:
+                record_tag_unit('other', size, line_no, raw)
             pc += size
 
         if cond_stack:

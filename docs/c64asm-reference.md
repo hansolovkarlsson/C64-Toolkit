@@ -893,6 +893,56 @@ the difference, so whatever's actually between them (`.byte`, `.word`,
 anything that advances `pc` at all) assembles completely normally, on
 its own terms, with `.tag` only watching from the outside.
 
+### Field-shape checking
+
+The total-size check above only catches one class of mistake — the
+block ending up the wrong number of bytes overall. `.endtag` also
+compares each field against whatever data actually landed in its
+place, one at a time, which catches a mismatch the size check alone
+can't: two separate 1-byte values standing in for one 2-byte `.word`
+field add up to exactly the same total size as the field they're
+replacing, so only checking each field's own shape — not just the
+block's total — catches it:
+
+```asm
+room_data: .tag Room
+        .byte $34, $12          ; meant to be ".word $1234"
+        .byte FOREST, $ff, COTTAGE, $ff
+.endtag
+```
+
+```
+Assembly error: '.tag Room': field 'desc_ptr' is a 2-byte '.word' value, but the data here is a 1-byte '.byte'/'.text' value (line 2: .byte $34, $12)
+```
+
+Each field's shape comes straight from how it was declared in the
+`.struct` block: a `.byte`/`.db` field is one `.byte`-shaped unit, a
+`.word`/`.dw` field is one `.word`-shaped unit, and a `.res`/`.ds`/
+`.fill` field is one fixed-width unit of its declared size. On the
+data side, every individual value on a `.byte`/`.text` line (including
+each character of a quoted string) is its own 1-byte unit, every value
+on a `.word` line is its own 2-byte unit, and a `.res`/`.fill`/
+`.incbin` line, an `.align`'s padding, or an ordinary instruction each
+contribute one unit sized to however many bytes they actually emit.
+`.endtag` walks both lists in order, field by field, and reports:
+
+- a **shape mismatch**, at the exact data line responsible, when a
+  field and the unit standing in for it don't agree in kind or width
+  (the example above);
+- **missing data**, at the `.endtag` line, if the tagged block runs out
+  of data units before every field has one;
+- **extra data**, at the first unmatched data line, if there are more
+  data units than the struct has fields.
+
+This only checks *shape* (kind and byte width), not values — swapping
+two same-kind fields (two `.byte` fields written in the wrong order,
+say) still isn't caught, since nothing about their shape differs; that
+class of mistake needs a runtime or test-level check instead, the same
+as it always has. It also only runs once `.tag`'s name resolves to a
+real `.struct` block with a recorded field list — a hand-defined
+`Name.size` symbol with no `.struct` behind it (unusual to write on
+purpose) falls back to the size check above alone.
+
 ### Tagging each element of an array
 
 `.tag` checks one struct instance's size, not an array of them as a

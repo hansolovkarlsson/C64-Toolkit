@@ -13,6 +13,38 @@ this project's full regression suite before being marked done — that
 discipline is this project's own standing practice, not something
 worth repeating in every entry below.
 
+## `.tag`/`.endtag`: per-field shape checking
+
+`.endtag`'s existing check (the block's total size matches `Name.size`)
+left one gap open: two separate 1-byte values standing in for one
+2-byte `.word` field add up to the exact same total size as the field
+they're replacing, so a size-only check can't tell them apart. `.endtag`
+now also walks the tagged struct's field list against the data that
+actually landed in each field's place, one at a time, reporting a
+shape mismatch at the exact data line responsible:
+
+```asm
+room_data: .tag Room
+        .byte $34, $12          ; meant to be ".word $1234"
+        .byte FOREST, $ff, COTTAGE, $ff
+.endtag
+```
+```
+Assembly error: '.tag Room': field 'desc_ptr' is a 2-byte '.word' value, but the data here is a 1-byte '.byte'/'.text' value (line 2: .byte $34, $12)
+```
+
+Also catches too few or too many data units for the struct's field
+count, each reported at the line responsible rather than folded into
+the existing total-size message. Only checks *shape* (kind and byte
+width), not values, so two same-kind fields written in the wrong order
+still isn't caught — nothing about their shape differs. Confirmed to
+introduce zero false positives across every `.tag`-using example this
+project ships (`adventure.asm`'s `room_data`/`room_exits` tables):
+every existing `.prg`/`--listing` output is byte-for-byte unchanged,
+since `.tag` still emits nothing itself — this is purely an additional
+check, not a behavior change for correctly-shaped data. See
+`c64asm-reference.md` §12, "Field-shape checking".
+
 ## `maze.asm`: stage 6 (power pellet vulnerability)
 
 Power pellets do something now: eating one starts a timed
