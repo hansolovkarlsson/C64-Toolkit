@@ -1,24 +1,30 @@
 /*
- * print.h - fixed-arity print helpers, since cc64 has no variadic
- * functions and so no real printf(). print_int(n) instead of
- * printf("%d", n); chain calls together (with putchar/puts for
- * literal text in between) for anything printf would normally do in
- * one call. All of these build on putchar(), so they automatically
- * get its PETSCII case handling - see the README's "PETSCII and
- * case" section if that's unfamiliar.
+ * print.h - fixed-arity print helpers. cc64 does have a `printf()`
+ * builtin now (no #include needed - see the README's "How printf
+ * works"), but only because its format string has to be a compile-time
+ * string literal, which is what lets the compiler expand each call
+ * into the equivalent chain of fixed-arity calls itself; there's still
+ * no real variadic-function support underneath it. print_int(n)/
+ * print_hex(n) below are that same expansion, just written out by
+ * hand - useful on their own when you want one piece of a message
+ * without the rest of it being a compile-time-constant format string
+ * at all. All of these build on putchar(), so they automatically get
+ * its PETSCII case handling - see the README's "PETSCII and case"
+ * section if that's unfamiliar.
  *
- * NOTABLY MISSING: print_uint(), an unsigned decimal printer. It's
- * left out deliberately rather than shipped broken: cc64's `int` is
- * always signed, with no unsigned type and no cast operator, so
- * there's no correct way to write "divide this 16-bit bit pattern as
- * if it were unsigned" using cc64's own `/` and `%` (which are always
- * signed) or its `<`/`>` comparisons (also always signed, except when
- * comparing pointers) - a print_uint built from ordinary cc64 code
- * would silently misprint any value from 32768-65535. print_hex()
- * below doesn't have this problem (bitwise `&` and `>>` extract the
- * same bits regardless of how you'd interpret their sign - see the
- * comment on it for why) and covers most of the same need: showing
- * the raw contents of a 16-bit value, address, or bit pattern.
+ * NOTABLY MISSING: print_uint(), an unsigned decimal printer (and, for
+ * the identical reason, printf()'s own format string has no `%u`
+ * either). It's left out deliberately rather than shipped broken:
+ * cc64's `int` is always signed, with no unsigned type and no cast
+ * operator, so there's no correct way to write "divide this 16-bit bit
+ * pattern as if it were unsigned" using cc64's own `/` and `%` (which
+ * are always signed) or its `<`/`>` comparisons (also always signed,
+ * except when comparing pointers) - a print_uint built from ordinary
+ * cc64 code would silently misprint any value from 32768-65535.
+ * print_hex() below doesn't have this problem (bitwise `&` and `>>`
+ * extract the same bits regardless of how you'd interpret their sign -
+ * see the comment on it for why) and covers most of the same need:
+ * showing the raw contents of a 16-bit value, address, or bit pattern.
  */
 
 /* Prints n in decimal, with a leading '-' if negative. */

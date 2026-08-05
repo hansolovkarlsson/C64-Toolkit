@@ -31,9 +31,16 @@
    the full design, and `tests/dowhile_switch.c` for the regression
    coverage, including a switch nested inside a loop and inside another
    switch.
-6. Real `printf`-lite — blocked on variadic function support, which is
-   a real calling-convention feature (not just a library function),
-   unlike the rest of the standard library above.
+6. ~~Real `printf`-lite~~ — done, without ever building real variadic-
+   function machinery: `printf`'s format string must be a compile-time
+   string literal, so the compiler parses it once, at compile time, and
+   expands each call into the same fixed sequence of `puts`/`putchar`-
+   equivalent calls a programmer chaining `print_int`/`print_hex` by
+   hand would have written anyway. `%d`/`%x`/`%c`/`%s`/`%%` are
+   supported; `%u` deliberately isn't, for the same reason `print_uint`
+   was never added to `lib/print.h` (see that header's own comment).
+   See `README.md`'s "How printf works" for the full design and
+   `tests/printf.c` for the regression coverage.
 
 ## Other language ideas, not yet scheduled
 
@@ -62,8 +69,10 @@
 
 Currently: `lib/string.h` (`strlen`/`strcpy`/`strcat`/`strcmp`/`strchr`/
 `memset`/`memcpy`) and `lib/print.h` (`print_int`/`print_hex`/
-`newline`) — see `README.md`'s "The standard library" for the full API
-and why `print_uint` is deliberately not included.
+`newline` - `printf` itself is a compiler builtin now, not part of this
+header, and needs no `#include` at all) — see `README.md`'s "The
+standard library" for the full API and why `print_uint` is
+deliberately not included.
 
 Wanted, not started: an expanded "BASIC-equivalent" convenience
 library, a graphics library, a sound library. See the root

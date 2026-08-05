@@ -67,7 +67,7 @@ LSym *find_local(const char *name) {
     return NULL;
 }
 
-/* putchar/puts/peek/poke are handled directly in codegen_expr.c's
+/* putchar/puts/peek/poke/printf are handled directly in codegen_expr.c's
  * gen_call() rather than being real, callable FnSym entries - they're
  * "magic" the compiler knows about, not user-definable functions. This
  * check exists so a user can't accidentally (or deliberately) declare
@@ -76,7 +76,8 @@ LSym *find_local(const char *name) {
  * rejects the redefinition with a clear error instead. */
 int is_builtin(const char *name) {
     return strcmp(name, "putchar") == 0 || strcmp(name, "puts") == 0 ||
-           strcmp(name, "peek") == 0 || strcmp(name, "poke") == 0;
+           strcmp(name, "peek") == 0 || strcmp(name, "poke") == 0 ||
+           strcmp(name, "printf") == 0;
 }
 
 void register_local(const char *name, int type, int isPointer, int structTag,

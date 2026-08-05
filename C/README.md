@@ -160,7 +160,10 @@ to approach the codebase for the first time:
   `puts()` - see below).
 - **Builtins:** `putchar(x)`, `puts(s)` (accepts any `char*` - a
   literal, a variable, a buffer you built at runtime, all walked at
-  runtime up to the first zero byte), `peek(addr)`, `poke(addr, val)`.
+  runtime up to the first zero byte), `peek(addr)`, `poke(addr, val)`,
+  `printf(fmt, ...)` (`fmt` must be a string literal - see "How printf
+  works" below for the full specifier list and why that restriction is
+  what makes this possible at all without real variadic functions).
 - **Light type checking:** the compiler doesn't do full C type
   checking, but it does catch some common mistakes at compile time
   rather than letting them corrupt memory silently: dereferencing a
@@ -194,12 +197,11 @@ and return values (use `struct Tag *` instead), struct members that
 are themselves a struct-by-value or an array, `union`, `typedef`s
 (so every struct variable/parameter needs the full `struct Tag`
 spelled out - no bare `Tag` after a `typedef struct Tag Tag;`),
-multi-dimensional arrays, floating point, and anything like `printf`
-(there's no variadic-function support, so no
-way to accept a runtime-variable number of arguments - `print_int`/
-`print_hex` in `lib/print.h` cover the common cases with fixed-arity
-calls instead). The preprocessor is limited to `#include` - no
-`#define`, no macros, no conditional compilation.
+multi-dimensional arrays, floating point, and real variadic functions
+(a user-defined function can't take a `...` parameter the way `printf`
+does - see "How printf works" below for how `printf` itself gets away
+without that machinery existing at all). The preprocessor is limited
+to `#include` - no `#define`, no macros, no conditional compilation.
 
 ## Design notes
 
@@ -338,6 +340,49 @@ that keeps both the parser and codegen's "build the compare chain,
 then walk the body in order" strategy considerably simpler, at the cost
 of a style of C essentially nothing outside deliberately obscure code
 relies on.
+
+### How printf works
+
+`printf(fmt, ...)` exists without cc64 having any real variadic-function
+machinery at all - no `...` parameters, no `va_list`/`va_arg`, nothing
+resembling a real C calling convention for a variable argument count.
+The trick: **`fmt` must be a string literal**, not a variable or any
+other runtime expression. Since the format string's exact contents are
+therefore known to the compiler itself, at compile time, a `printf()`
+call doesn't need to be compiled into anything that parses a format
+string at runtime - the compiler parses it once, right there in
+`codegen_expr.c`'s `gen_printf_call()`, and emits a fixed, specific
+sequence of ordinary calls for that one call site: a literal run of
+text between specifiers becomes an interned string literal plus
+`JSR __rt_puts` (exactly what a separate `puts("...")` call for that
+text would generate), and each specifier evaluates the next actual
+argument and dispatches to whichever runtime routine matches it. In
+other words, `printf("x=%d, y=%s\n", x, name)` compiles to essentially
+the same code `putchar`/`print_int`-chaining by hand always could have
+- `printf` just writes that chain out for you from the format string,
+at compile time, rather than you writing it out by hand every time.
+
+Supported specifiers: `%d` (signed decimal - see `print_int()` in
+`lib/print.h`, which this shares its actual digit-collection algorithm
+with, reimplemented directly in 6502 assembly as `__rt_print_int16`
+rather than requiring `#include <print.h>`), `%x` (4 uppercase hex
+digits, same as `print_hex()`), `%c` (one character, PETSCII-converted
+the same way `putchar()` converts its argument), `%s` (a `char*`
+argument, walked the same way `puts()` walks one), and `%%` for a
+literal `%`. **`%u` is deliberately not supported**, for the exact same
+reason `lib/print.h` has no `print_uint()` - see that header's own
+comment for the full explanation of why cc64's signed-only `int` makes
+an unsigned decimal formatter impossible to write correctly. Anything
+else (`%f`, width/precision modifiers like `%5d`, `%.2f`) isn't
+supported either - there's no floating point in cc64 at all, and
+nothing else here has ever supported field widths or precision.
+
+Argument count and type are checked against the format string at
+compile time, the same way an ordinary function call's arguments are
+checked against its declared parameters: too few or too many arguments
+for the specifiers present, a pointer where `%d`/`%x`/`%c` expects a
+plain value, or a non-`char*` where `%s` expects one, are all compile-
+time errors rather than runtime surprises.
 
 ### Two-pass compilation
 
@@ -534,12 +579,17 @@ last, negative case constants, real fallthrough with a missing
 loop - the case most likely to silently break if the loop/switch
 context stack were wrong), and a switch nested inside another switch
 (confirming the inner switch's own `break` doesn't leak out to the
-outer one).
+outer one). `tests/printf.c` covers every specifier (`%d`/`%x`/`%c`/
+`%s`/`%%`), negative and zero values, hex output at all four digit
+widths (a value needing 1, 2, 3, or 4 hex digits), a format string with
+no specifiers at all and one with only a specifier and no literal text,
+computed expression arguments (not just literals), and `%%` at both the
+very start and very end of a format string.
 
-Run all eight:
+Run all nine:
 
 ```sh
-for f in hello features forward pointers recursion include structs dowhile_switch; do
+for f in hello features forward pointers recursion include structs dowhile_switch printf; do
     ./cc64 tests/$f.c -o tests/$f.asm
     ./c64asm tests/$f.asm -o tests/$f.prg --listing tests/$f.lst
     python3 mini6502.py tests/$f.prg tests/$f.lst
@@ -548,7 +598,7 @@ done
 
 ## Roadmap
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (a `printf`-lite is the
-main remaining item from the original next-steps list - `do`/`while`
-and `switch` are both done), other language/tooling ideas not yet
-scheduled, and the standard library's own open items.
+See [`ROADMAP.md`](ROADMAP.md) for other language/tooling ideas not
+yet scheduled and the standard library's own open items - every item
+from the original "next steps" list (`do`/`while`, `switch`, a
+`printf`-lite) is now done.

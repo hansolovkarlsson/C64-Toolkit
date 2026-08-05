@@ -98,6 +98,18 @@ void emit_runtime(void) {
     emit("    .fill 2, 0");
     emit("__zpT0:"); /* runtime scratch (division remainder, multiply accumulator) */
     emit("    .fill 2, 0");
+    emit("__rt_pi_neg:"); /* __rt_print_int16 scratch: 1 if the value being printed */
+    emit("    .byte 0");   /* was negative, else 0 */
+    emit("__rt_pi_ndig:"); /* __rt_print_int16 scratch: how many digits are in __rt_pbuf */
+    emit("    .byte 0");
+    emit("__rt_pbuf:"); /* __rt_print_int16 scratch: decimal digits, least-significant */
+    emit("    .fill 5, 0"); /* first (32767 is the largest magnitude that prints correctly -- */
+                              /* 5 digits -- see __rt_print_int16's own comment on -32768) */
+    emit("__rt_ph_lo:"); /* __rt_print_hex16 scratch: saved low byte of the value being */
+    emit("    .byte 0");   /* printed, read back after the high byte's own digits are */
+                              /* already printed and __zpR has been overwritten */
+    emit("__rt_ph_byte_sv:"); /* __rt_ph_byte scratch: the byte being split into 2 hex */
+    emit("    .byte 0");        /* digits, saved across printing the high nibble first */
     emit(" ");
     emit("; ---- runtime library -------------------------------------------");
     /* The operand stack: how nested expressions like a*(b+c) work.
@@ -718,6 +730,153 @@ void emit_runtime(void) {
     emit("    STA __zpAP+1");
     emit("    JMP __rt_puts_loop");
     emit("__rt_puts_done:");
+    emit("    RTS");
+    emit(" ");
+
+    /* printf()'s runtime half. The format-string PARSING itself happens
+     * entirely at compile time, in codegen_expr.c's gen_printf_call() -
+     * a printf() call's format string must be a string literal, so by
+     * the time any code generation happens, the compiler already knows
+     * exactly which specifiers appear and in what order. What's left to
+     * do at runtime is just the same per-value formatting print_int()/
+     * print_hex() (lib/print.h) already do in ordinary cc64 code -
+     * reimplemented here directly in assembly instead, so a program
+     * using printf("%d", x) doesn't have to #include <print.h> and pull
+     * in print_int as an ordinary (indirectly recursive-capable, frame-
+     * saving) function call just to format one number the same way
+     * putchar()/puts() are always available with no #include at all. */
+
+    /* Prints the character in A, PETSCII-converted exactly the way
+     * putchar() converts its own argument - shared by every routine
+     * below that prints a single character (a digit, '-', a hex letter)
+     * rather than repeating the same four instructions at each call
+     * site. Tail-calls into __CHROUT, so its own RTS returns straight
+     * to whichever of THIS routine's callers is expecting one back. */
+    emit("__rt_putc:");
+    emit("    STA __zpR");
+    emit("    JSR __rt_topetscii");
+    emit("    LDA __zpR");
+    emit("    JMP __CHROUT");
+    emit(" ");
+
+    /* Prints __zpR as 4 uppercase hex digits (0000-FFFF) - the runtime
+     * equivalent of print_hex() in lib/print.h, and deliberately
+     * identical in what it prints (the raw bit pattern, unaffected by
+     * sign, via AND/shift rather than anything that cares whether the
+     * value is "negative"). __rt_ph_lo saves the low byte before any
+     * printing starts: by the time the high byte's own two digits have
+     * been printed (each going through __rt_putc, which uses __zpR as
+     * its own scratch - see cc64.h's calling-convention note on __zpR
+     * never being preserved across a call), __zpR no longer holds the
+     * original input, so the low byte has to be read out before that
+     * happens rather than reloaded from __zpR afterward. */
+    emit("__rt_print_hex16:");
+    emit("    LDA __zpR");
+    emit("    STA __rt_ph_lo");
+    emit("    LDA __zpR+1");
+    emit("    JSR __rt_ph_byte");
+    emit("    LDA __rt_ph_lo");
+    emit("    JSR __rt_ph_byte");
+    emit("    RTS");
+    emit("__rt_ph_byte:"); /* prints the byte in A as 2 uppercase hex digits */
+    emit("    STA __rt_ph_byte_sv"); /* saved in memory, not pushed - this project's own
+                                         convention avoids the 6502 hardware stack for
+                                         anything but JSR/RTS (see emit_runtime()'s own
+                                         header comment); a byte of ordinary RAM does the
+                                         same job */
+    emit("    LSR A");
+    emit("    LSR A");
+    emit("    LSR A");
+    emit("    LSR A");
+    emit("    JSR __rt_ph_nibble");
+    emit("    LDA __rt_ph_byte_sv");
+    emit("    AND #$0F");
+    emit("    JMP __rt_ph_nibble"); /* tail call - its RTS returns to __rt_ph_byte's own caller */
+    emit("__rt_ph_nibble:"); /* prints the low nibble of A as one hex digit */
+    emit("    CMP #10");
+    emit("    BCC __rt_ph_digit");
+    emit("    CLC");
+    emit("    ADC #55"); /* 'A' - 10 */
+    emit("    JMP __rt_putc");
+    emit("__rt_ph_digit:");
+    emit("    CLC");
+    emit("    ADC #48"); /* '0' */
+    emit("    JMP __rt_putc");
+    emit(" ");
+
+    /* Prints __zpR as signed decimal, with a leading '-' if negative -
+     * the runtime equivalent of print_int() in lib/print.h, same
+     * algorithm: negate a negative value first, collect digits
+     * least-significant-first via repeated division by 10 (__rt_pbuf),
+     * then print them back out in reverse (most-significant-first).
+     * __rt_sdivmod16 (the same routine `/`/`%` themselves compile to)
+     * does the division; its divisor operand __zpR is read but never
+     * written by __rt_udiv16 underneath it, so setting __zpR=10 once,
+     * before the loop, is enough - it doesn't need resetting on every
+     * iteration the way the dividend (__zpR2, holding the running
+     * quotient) does.
+     *
+     * Shares print_int()'s one known gap rather than working around it:
+     * negating -32768 (INT_MIN) overflows right back to -32768 in
+     * 16-bit two's complement, so that one specific value prints
+     * wrong (this bug-for-bug parity is deliberate, not an oversight -
+     * see lib/print.h's own print_int() for the identical behavior). */
+    emit("__rt_print_int16:");
+    emit("    LDA #0");
+    emit("    STA __rt_pi_neg");
+    emit("    STA __rt_pi_ndig");
+    emit("    LDA __zpR+1");
+    emit("    BPL __rt_pi_notneg");
+    emit("    INC __rt_pi_neg");
+    emit("    SEC");
+    emit("    LDA #0");
+    emit("    SBC __zpR");
+    emit("    STA __zpR");
+    emit("    LDA #0");
+    emit("    SBC __zpR+1");
+    emit("    STA __zpR+1");
+    emit("__rt_pi_notneg:");
+    emit("    LDA __zpR");
+    emit("    ORA __zpR+1");
+    emit("    BNE __rt_pi_digloop_init");
+    emit("    LDA __rt_pi_neg");
+    emit("    BEQ __rt_pi_zero");
+    emit("    LDA #45"); /* '-' */
+    emit("    JSR __rt_putc");
+    emit("__rt_pi_zero:");
+    emit("    LDA #48"); /* '0' */
+    emit("    JMP __rt_putc");
+    emit("__rt_pi_digloop_init:");
+    emit("    LDA __zpR");
+    emit("    STA __zpR2");
+    emit("    LDA __zpR+1");
+    emit("    STA __zpR2+1");
+    emit("    LDA #10");
+    emit("    STA __zpR");
+    emit("    LDA #0");
+    emit("    STA __zpR+1");
+    emit("__rt_pi_digloop:"); /* __zpR2 (the running value) / 10 -> new __zpR2, digit in __zpT0 */
+    emit("    JSR __rt_sdivmod16");
+    emit("    LDX __rt_pi_ndig");
+    emit("    LDA __zpT0");
+    emit("    STA __rt_pbuf,X");
+    emit("    INC __rt_pi_ndig");
+    emit("    LDA __zpR2");
+    emit("    ORA __zpR2+1");
+    emit("    BNE __rt_pi_digloop");
+    emit("    LDA __rt_pi_neg");
+    emit("    BEQ __rt_pi_printloop");
+    emit("    LDA #45");
+    emit("    JSR __rt_putc");
+    emit("__rt_pi_printloop:"); /* walk __rt_pbuf backwards: most-significant digit first */
+    emit("    DEC __rt_pi_ndig");
+    emit("    LDX __rt_pi_ndig");
+    emit("    LDA __rt_pbuf,X");
+    emit("    CLC");
+    emit("    ADC #48");
+    emit("    JSR __rt_putc");
+    emit("    LDA __rt_pi_ndig");
+    emit("    BNE __rt_pi_printloop");
     emit("    RTS");
     emit(" ");
 }

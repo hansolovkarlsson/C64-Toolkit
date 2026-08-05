@@ -38,6 +38,16 @@ __zpT1:
     .fill 2, 0
 __zpT0:
     .fill 2, 0
+__rt_pi_neg:
+    .byte 0
+__rt_pi_ndig:
+    .byte 0
+__rt_pbuf:
+    .fill 5, 0
+__rt_ph_lo:
+    .byte 0
+__rt_ph_byte_sv:
+    .byte 0
  
 ; ---- runtime library -------------------------------------------
 __rt_push:
@@ -477,6 +487,99 @@ __rt_puts_loop:
     STA __zpAP+1
     JMP __rt_puts_loop
 __rt_puts_done:
+    RTS
+ 
+__rt_putc:
+    STA __zpR
+    JSR __rt_topetscii
+    LDA __zpR
+    JMP __CHROUT
+ 
+__rt_print_hex16:
+    LDA __zpR
+    STA __rt_ph_lo
+    LDA __zpR+1
+    JSR __rt_ph_byte
+    LDA __rt_ph_lo
+    JSR __rt_ph_byte
+    RTS
+__rt_ph_byte:
+    STA __rt_ph_byte_sv
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    JSR __rt_ph_nibble
+    LDA __rt_ph_byte_sv
+    AND #$0F
+    JMP __rt_ph_nibble
+__rt_ph_nibble:
+    CMP #10
+    BCC __rt_ph_digit
+    CLC
+    ADC #55
+    JMP __rt_putc
+__rt_ph_digit:
+    CLC
+    ADC #48
+    JMP __rt_putc
+ 
+__rt_print_int16:
+    LDA #0
+    STA __rt_pi_neg
+    STA __rt_pi_ndig
+    LDA __zpR+1
+    BPL __rt_pi_notneg
+    INC __rt_pi_neg
+    SEC
+    LDA #0
+    SBC __zpR
+    STA __zpR
+    LDA #0
+    SBC __zpR+1
+    STA __zpR+1
+__rt_pi_notneg:
+    LDA __zpR
+    ORA __zpR+1
+    BNE __rt_pi_digloop_init
+    LDA __rt_pi_neg
+    BEQ __rt_pi_zero
+    LDA #45
+    JSR __rt_putc
+__rt_pi_zero:
+    LDA #48
+    JMP __rt_putc
+__rt_pi_digloop_init:
+    LDA __zpR
+    STA __zpR2
+    LDA __zpR+1
+    STA __zpR2+1
+    LDA #10
+    STA __zpR
+    LDA #0
+    STA __zpR+1
+__rt_pi_digloop:
+    JSR __rt_sdivmod16
+    LDX __rt_pi_ndig
+    LDA __zpT0
+    STA __rt_pbuf,X
+    INC __rt_pi_ndig
+    LDA __zpR2
+    ORA __zpR2+1
+    BNE __rt_pi_digloop
+    LDA __rt_pi_neg
+    BEQ __rt_pi_printloop
+    LDA #45
+    JSR __rt_putc
+__rt_pi_printloop:
+    DEC __rt_pi_ndig
+    LDX __rt_pi_ndig
+    LDA __rt_pbuf,X
+    CLC
+    ADC #48
+    JSR __rt_putc
+    LDA __rt_pi_ndig
+    BNE __rt_pi_printloop
     RTS
  
 ; ---- global variables --------------------------------------------

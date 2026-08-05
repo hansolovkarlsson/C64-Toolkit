@@ -17,6 +17,13 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
 - `c64asm`'s `.tag`/`.endtag` gained per-field shape checking, not just
   a total-size check (see `asm/ROADMAP.md`'s changelog pointer and
   `asm/docs/CHANGELOG.md`).
+- `cc64` picked up `do`/`while`, `switch`/`case`/`default`, and a
+  `printf`-lite — the entire original "next steps" list in
+  `C/ROADMAP.md` is now done. `printf` in particular is worth knowing
+  about toolkit-wide: it exists without `cc64` ever gaining real
+  variadic-function support, by requiring a compile-time-constant
+  format string and expanding each call at compile time instead - see
+  `C/README.md`'s "How printf works".
 
 ## Open cross-project questions
 

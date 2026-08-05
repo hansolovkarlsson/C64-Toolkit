@@ -406,7 +406,101 @@ static void gen_binop(const char *op, int unsignedCmp) {
  * own comment in symtab.c for the philosophy behind checks like this.
  * =================================================================== */
 
+/* printf()'s compile-time half. A printf() call's format string must
+ * be a string literal (not a runtime char*) - the same restriction
+ * `switch`'s case labels already have, and the whole reason this
+ * compiler can support printf() at all without ever building genuine
+ * variadic-argument-passing machinery (a real "..." calling-convention
+ * feature - see the ROADMAP.md entry this replaces). Because the
+ * format string's contents are known right here, at compile time, this
+ * function walks it once in plain C, emitting ordinary code for each
+ * piece as it goes: a run of literal text becomes an interned string
+ * literal plus JSR __rt_puts (exactly what a `puts("...")` call for
+ * that same text would generate), and each %-specifier consumes the
+ * next actual argument node and evaluates it with gen_expr_to_R() like
+ * any other call argument, dispatching to whichever runtime routine
+ * matches. There's no "printf" at runtime at all in the usual sense -
+ * every call site compiles down to its own specific, fixed sequence of
+ * puts/print_int/print_hex/putchar-equivalent calls, the same as if
+ * the programmer had chained them by hand. */
+static void gen_printf_call(Node *n) {
+    if (!n->a) fatal(n->line, "printf() requires a format string argument");
+    if (n->a->kind != N_STR)
+        fatal(n->line, "printf()'s format string must be a string literal "
+                        "(not a variable or expression) - cc64 has no true "
+                        "variadic functions, so the format has to be known "
+                        "at compile time");
+    const char *fmt = n->a->sval;
+    Node *arg = n->a->next;
+
+    char chunk[1024]; size_t chunkLen = 0;
+    for (const char *p = fmt; *p; p++) {
+        if (*p != '%') {
+            if (chunkLen + 1 >= sizeof(chunk))
+                fatal(n->line, "printf() format string's literal text is too long");
+            chunk[chunkLen++] = *p;
+            continue;
+        }
+        p++;
+        if (*p == '%') {
+            if (chunkLen + 1 >= sizeof(chunk))
+                fatal(n->line, "printf() format string's literal text is too long");
+            chunk[chunkLen++] = '%';
+            continue;
+        }
+        if (chunkLen > 0) {
+            chunk[chunkLen] = '\0';
+            char *lbl = intern_string(chunk);
+            emit("    LDA #<%s", lbl);
+            emit("    STA __zpR");
+            emit("    LDA #>%s", lbl);
+            emit("    STA __zpR+1");
+            emit("    JSR __rt_puts");
+            chunkLen = 0;
+        }
+        if (*p == '\0')
+            fatal(n->line, "printf() format string ends with a bare '%%'");
+        if (*p != 'd' && *p != 'x' && *p != 'c' && *p != 's')
+            fatal(n->line, "printf(): unsupported format specifier '%%%c' "
+                            "(supported: %%d, %%x, %%c, %%s, %%%%)", *p);
+        if (!arg)
+            fatal(n->line, "printf(): not enough arguments for its format string");
+        if (*p == 's') {
+            CType t = infer_type(arg);
+            if (!(t.isPointer && t.base == TY_CHAR))
+                fatal(arg->line, "printf(): '%%s' requires a char* argument "
+                                  "(a string literal or char* value)");
+            gen_expr_to_R(arg);
+            emit("    JSR __rt_puts");
+        } else {
+            CType t = infer_type(arg);
+            if (t.isPointer)
+                fatal(arg->line, "printf(): '%%%c' requires a non-pointer "
+                                  "argument", *p);
+            gen_expr_to_R(arg);
+            if (*p == 'd') emit("    JSR __rt_print_int16");
+            else if (*p == 'x') emit("    JSR __rt_print_hex16");
+            else { /* 'c' */
+                emit("    LDA __zpR");
+                emit("    JSR __rt_putc");
+            }
+        }
+        arg = arg->next;
+    }
+    if (chunkLen > 0) {
+        chunk[chunkLen] = '\0';
+        char *lbl = intern_string(chunk);
+        emit("    LDA #<%s", lbl);
+        emit("    STA __zpR");
+        emit("    LDA #>%s", lbl);
+        emit("    STA __zpR+1");
+        emit("    JSR __rt_puts");
+    }
+    if (arg) fatal(n->line, "printf(): too many arguments for its format string");
+}
+
 static void gen_call(Node *n) {
+    if (strcmp(n->name, "printf") == 0) { gen_printf_call(n); return; }
     if (strcmp(n->name, "putchar") == 0) {
         int cnt = 0; for (Node *a = n->a; a; a = a->next) cnt++;
         if (cnt != 1) fatal(n->line, "putchar() takes exactly 1 argument");
