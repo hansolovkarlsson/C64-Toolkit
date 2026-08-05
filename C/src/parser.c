@@ -104,6 +104,7 @@ static Node *parse_expr(void);
 static Node *parse_assign(void);
 static Node *parse_stmt(void);
 static Node *parse_block(void);
+static Node *parse_switch(void);
 
 /* ===================================================================
  * Pass A: scan top-level declarations (signatures only, no bodies)
@@ -640,6 +641,72 @@ static Node *parse_vardecl(void) {
     return n;
 }
 
+/* `switch (expr) { case CONST: stmt* ... default: stmt* }`.
+ *
+ * Deliberately flat: only a `case`/`default` label written directly at
+ * this brace-depth is recognized as one - a case label nested inside
+ * an inner `{ }` block or inside an `if` (Duff's-device-style tricks)
+ * is not supported, and parses as a plain (likely erroring) statement
+ * instead. Real C's grammar technically allows that, since a label can
+ * attach to any statement anywhere, but no C written in an ordinary
+ * style relies on it, and skipping it keeps both this parser and
+ * codegen's compare-chain-then-body-in-order strategy (see N_SWITCH in
+ * codegen_stmt.c) much simpler.
+ *
+ * Every `case` value must itself be a constant literal (a plain number
+ * or char literal, optionally negated) - the same restriction a global
+ * variable's initializer already has (see pass_a()), and for a closely
+ * related reason: codegen compares the switch value against each case
+ * inline, as an immediate operand baked into the generated CMP
+ * instructions, which only works for a value known at compile time. */
+static Node *parse_switch(void) {
+    Token *t = advance(); /* 'switch' */
+    expect(T_LPAREN, "'('");
+    Node *expr = parse_expr();
+    expect(T_RPAREN, "')'");
+    expect(T_LBRACE, "'{'");
+    Node *head = NULL, *tail = NULL;
+    long seen[256]; int nseen = 0;
+    int sawDefault = 0;
+    while (!check(T_RBRACE)) {
+        Node *item;
+        if (check(T_CASE)) {
+            Token *ct = advance();
+            int neg = 0;
+            if (check(T_MINUS)) { neg = 1; advance(); }
+            if (!check(T_NUM) && !check(T_CHARLIT))
+                fatal(cur()->line, "'case' requires a constant integer literal");
+            long v = advance()->ival;
+            if (neg) v = -v;
+            expect(T_COLON, "':'");
+            for (int i = 0; i < nseen; i++)
+                if (seen[i] == v) fatal(ct->line, "duplicate 'case %ld' in this switch", v);
+            if (nseen >= (int)(sizeof(seen)/sizeof(seen[0])))
+                fatal(ct->line, "too many 'case' labels in one switch");
+            seen[nseen++] = v;
+            item = node_new(N_CASE, ct->line);
+            item->ival = v;
+        } else if (check(T_DEFAULT)) {
+            Token *dt = advance();
+            expect(T_COLON, "':'");
+            if (sawDefault) fatal(dt->line, "multiple 'default' labels in one switch");
+            sawDefault = 1;
+            item = node_new(N_DEFAULT, dt->line);
+        } else {
+            item = parse_stmt();
+        }
+        if (!head) head = tail = item; else { tail->next = item; tail = item; }
+    }
+    expect(T_RBRACE, "'}'");
+    Node *n = node_new(N_SWITCH, t->line);
+    n->a = expr;
+    n->b = head; /* flat list: N_CASE/N_DEFAULT markers interleaved with
+                    ordinary statements, in source order - see N_SWITCH
+                    in codegen_stmt.c for how fallthrough falls out of
+                    just walking this list in order */
+    return n;
+}
+
 /* One statement. Each branch here corresponds to one statement form
  * in the grammar; the shape closely follows how you'd describe C's
  * statement grammar in prose ("an if is 'if' '(' expr ')' stmt
@@ -668,6 +735,19 @@ static Node *parse_stmt(void) {
         n->a = cond; n->b = body;
         return n;
     }
+    if (check(T_DO)) {
+        Token *t = advance();
+        Node *body = parse_stmt();
+        expect(T_WHILE, "'while'");
+        expect(T_LPAREN, "'('");
+        Node *cond = parse_expr();
+        expect(T_RPAREN, "')'");
+        expect(T_SEMI, "';'");
+        Node *n = node_new(N_DOWHILE, t->line);
+        n->a = cond; n->b = body;
+        return n;
+    }
+    if (check(T_SWITCH)) return parse_switch();
     if (check(T_FOR)) {
         Token *t = advance();
         expect(T_LPAREN, "'('");

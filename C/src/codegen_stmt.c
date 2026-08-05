@@ -13,14 +13,42 @@
 
 #include "cc64.h"
 
-/* Every active loop's break/continue targets, as a simple stack -
- * entering a loop pushes its labels, leaving it pops them, and
- * break/continue just jump to whatever's on top. Purely internal to
- * this file: nothing outside gen_stmt() ever needs to know a loop is
- * currently being compiled. */
-typedef struct { char *breakLbl; char *contLbl; } LoopCtx;
+/* Every active loop OR switch's break target, as a simple stack -
+ * entering one pushes an entry, leaving it pops it, and `break` always
+ * jumps to whatever's on top, matching real C: break exits the
+ * innermost enclosing loop or switch, whichever is nearer. `continue`
+ * is narrower - it only ever means "the nearest enclosing LOOP, skip
+ * over any switch in between" - which is why `kind` exists: N_CONTINUE
+ * below scans downward from the top for the first CTX_LOOP entry
+ * rather than blindly using the top of the stack the way N_BREAK does.
+ * contLbl is meaningless for a CTX_SWITCH entry (switches don't have a
+ * continue target of their own) and left NULL. Purely internal to this
+ * file: nothing outside gen_stmt() ever needs to know a loop or switch
+ * is currently being compiled. */
+typedef enum { CTX_LOOP, CTX_SWITCH } CtxKind;
+typedef struct { CtxKind kind; char *breakLbl; char *contLbl; } LoopCtx;
 static LoopCtx g_loops[64];
 static int g_nloops = 0;
+
+/* Compares __zpR (the switch value, still sitting there from just
+ * before the compare chain that calls this - see N_SWITCH below)
+ * against a compile-time-constant case value, and jumps to `targetLbl`
+ * if equal. Both BNEs here only ever need to jump the few bytes to
+ * `notEq`, right below - always in range, unlike emit_far_branch's
+ * concern - so the only far jump needed is the final unconditional JMP
+ * to the (possibly distant) case body, which JMP already handles with
+ * no range limit. */
+static void gen_case_eq_branch(long value, const char *targetLbl) {
+    char *notEq = newlabel();
+    emit("    LDA __zpR");
+    emit("    CMP #%d", (int)(value & 0xFF));
+    emit("    BNE %s", notEq);
+    emit("    LDA __zpR+1");
+    emit("    CMP #%d", (int)((value >> 8) & 0xFF));
+    emit("    BNE %s", notEq);
+    emit("    JMP %s", targetLbl);
+    emit("%s:", notEq);
+}
 
 /* ===================================================================
  * gen_stmt(): the statement-level counterpart to gen_expr_to_R() in
@@ -66,6 +94,7 @@ static void gen_stmt(Node *n) {
         case N_WHILE: {
             char *Ltop = newlabel(); char *Lend = newlabel();
             if (g_nloops >= 64) fatal(n->line, "loops nested too deeply");
+            g_loops[g_nloops].kind = CTX_LOOP;
             g_loops[g_nloops].breakLbl = Lend; g_loops[g_nloops].contLbl = Ltop; g_nloops++;
             emit("%s:", Ltop);
             gen_expr_to_R(n->a);
@@ -78,10 +107,75 @@ static void gen_stmt(Node *n) {
             g_nloops--;
             return;
         }
+        case N_DOWHILE: {
+            /* Unlike N_WHILE, the condition is tested AFTER the body,
+             * so the body always runs at least once - Ltop is the
+             * body's own start, with no condition check in front of it
+             * at all. `continue` still needs to re-run the condition
+             * (not jump straight back to the top and skip it), so
+             * contLbl points at Lcond, the same way N_FOR's contLbl
+             * points at its increment step rather than its own top. */
+            char *Ltop = newlabel(); char *Lcond = newlabel(); char *Lend = newlabel();
+            if (g_nloops >= 64) fatal(n->line, "loops nested too deeply");
+            g_loops[g_nloops].kind = CTX_LOOP;
+            g_loops[g_nloops].breakLbl = Lend; g_loops[g_nloops].contLbl = Lcond; g_nloops++;
+            emit("%s:", Ltop);
+            gen_stmt(n->b);
+            emit("%s:", Lcond);
+            gen_expr_to_R(n->a);
+            emit("    LDA __zpR");
+            emit("    ORA __zpR+1");
+            emit_far_branch("BNE", Ltop);
+            emit("%s:", Lend);
+            g_nloops--;
+            return;
+        }
+        case N_SWITCH: {
+            CType st = infer_type(n->a);
+            if (st.isPointer) fatal(n->line, "'switch' expression must be an integer type, not a pointer");
+            if (st.base == TY_STRUCT) fatal(n->line, "'switch' expression must be an integer type, not a struct");
+            gen_expr_to_R(n->a);
+            /* The switch value sits in __zpR from here through the
+             * whole compare chain below, undisturbed: every 'case'
+             * label is a compile-time constant enforced by the parser,
+             * never a runtime expression, so nothing in between ever
+             * calls gen_expr_to_R() again to clobber it. */
+            char *Lend = newlabel();
+            if (g_nloops >= 64) fatal(n->line, "loops/switches nested too deeply");
+            g_loops[g_nloops].kind = CTX_SWITCH;
+            g_loops[g_nloops].breakLbl = Lend; g_loops[g_nloops].contLbl = NULL; g_nloops++;
+
+            /* Every case/default marker gets its own label up front
+             * (reusing Node's sval field - see its comment in cc64.h),
+             * so the compare chain below can reference a later case's
+             * label before that case's own body has been walked. */
+            char *defaultLbl = NULL;
+            for (Node *s = n->b; s; s = s->next) {
+                if (s->kind == N_CASE || s->kind == N_DEFAULT) s->sval = newlabel();
+                if (s->kind == N_DEFAULT) defaultLbl = s->sval;
+            }
+            for (Node *s = n->b; s; s = s->next)
+                if (s->kind == N_CASE) gen_case_eq_branch(s->ival, s->sval);
+            emit("    JMP %s", defaultLbl ? defaultLbl : Lend);
+
+            /* The body: markers become labels, everything else is
+             * generated in source order exactly like an ordinary
+             * block - which is what gives fallthrough for free, the
+             * same way it always falls out of "just keep executing the
+             * next statement" in real hardware. */
+            for (Node *s = n->b; s; s = s->next) {
+                if (s->kind == N_CASE || s->kind == N_DEFAULT) emit("%s:", s->sval);
+                else gen_stmt(s);
+            }
+            emit("%s:", Lend);
+            g_nloops--;
+            return;
+        }
         case N_FOR: {
             char *Ltop = newlabel(); char *Lend = newlabel(); char *Lincr = newlabel();
             if (n->a) gen_stmt(n->a);
             if (g_nloops >= 64) fatal(n->line, "loops nested too deeply");
+            g_loops[g_nloops].kind = CTX_LOOP;
             g_loops[g_nloops].breakLbl = Lend; g_loops[g_nloops].contLbl = Lincr; g_nloops++;
             emit("%s:", Ltop);
             if (n->b) {
@@ -111,13 +205,22 @@ static void gen_stmt(Node *n) {
             emit("    RTS");
             return;
         case N_BREAK:
-            if (g_nloops == 0) fatal(n->line, "'break' outside a loop");
+            /* Nearest enclosing loop OR switch, whichever is innermost -
+             * the top of the stack is always right, regardless of kind. */
+            if (g_nloops == 0) fatal(n->line, "'break' outside a loop or switch");
             emit("    JMP %s", g_loops[g_nloops-1].breakLbl);
             return;
-        case N_CONTINUE:
-            if (g_nloops == 0) fatal(n->line, "'continue' outside a loop");
-            emit("    JMP %s", g_loops[g_nloops-1].contLbl);
+        case N_CONTINUE: {
+            /* Nearest enclosing LOOP specifically - skip over any
+             * switch frame(s) on top of the stack, since a switch has
+             * no continue target of its own (see the LoopCtx comment
+             * above). */
+            int i = g_nloops - 1;
+            while (i >= 0 && g_loops[i].kind != CTX_LOOP) i--;
+            if (i < 0) fatal(n->line, "'continue' outside a loop");
+            emit("    JMP %s", g_loops[i].contLbl);
             return;
+        }
         case N_EMPTY:
             return;
         default:

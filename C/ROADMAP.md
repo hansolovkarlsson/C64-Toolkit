@@ -19,7 +19,18 @@
    by-value passing, which would need real struct-copying machinery at
    every call boundary for comparatively little added benefit given
    pointers already cover the common linked-structure use cases.
-5. `do`/`while`, `switch`.
+5. ~~`do`/`while`, `switch`~~ — done. `switch` compiles to a
+   straight-line compare-and-branch chain (no jump table), evaluating
+   its expression once and holding it in the primary register
+   untouched through the whole chain — which is why case labels must
+   be constant literals, the same restriction a global initializer
+   already has. `break`/`continue` both had to learn the loop-vs-switch
+   distinction (`break` exits the nearest enclosing loop *or* switch;
+   `continue` always means the nearest enclosing *loop*, skipping past
+   any switch in between) — see `README.md`'s "How switch works" for
+   the full design, and `tests/dowhile_switch.c` for the regression
+   coverage, including a switch nested inside a loop and inside another
+   switch.
 6. Real `printf`-lite — blocked on variadic function support, which is
    a real calling-convention feature (not just a library function),
    unlike the rest of the standard library above.

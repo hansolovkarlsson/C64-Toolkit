@@ -146,9 +146,9 @@
 typedef enum {
     T_EOF, T_IDENT, T_NUM, T_CHARLIT, T_STRLIT,
     T_INT, T_CHAR, T_VOID, T_STRUCT, T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
-    T_BREAK, T_CONTINUE,
+    T_BREAK, T_CONTINUE, T_DO, T_SWITCH, T_CASE, T_DEFAULT,
     T_LPAREN, T_RPAREN, T_LBRACE, T_RBRACE, T_LBRACKET, T_RBRACKET,
-    T_SEMI, T_COMMA, T_DOT, T_ARROW,
+    T_SEMI, T_COMMA, T_DOT, T_ARROW, T_COLON,
     T_ASSIGN, T_PLUS, T_MINUS, T_STAR, T_SLASH, T_PERCENT,
     T_EQ, T_NE, T_LT, T_GT, T_LE, T_GE,
     T_ANDAND, T_OROR, T_NOT, T_AMP, T_PIPE, T_CARET, T_TILDE,
@@ -176,7 +176,8 @@ typedef enum {
     N_ASSIGN, N_COMPOUND_ASSIGN, N_BINOP, N_LOGAND, N_LOGOR,
     N_UNARY, N_PREINC, N_PREDEC, N_POSTINC, N_POSTDEC,
     N_ADDR, N_DEREF,
-    N_BLOCK, N_IF, N_WHILE, N_FOR, N_RETURN, N_BREAK, N_CONTINUE,
+    N_BLOCK, N_IF, N_WHILE, N_DOWHILE, N_FOR, N_RETURN, N_BREAK, N_CONTINUE,
+    N_SWITCH, N_CASE, N_DEFAULT,
     N_EXPRSTMT, N_VARDECL, N_EMPTY
 } NodeKind;
 
@@ -192,8 +193,11 @@ typedef struct Node {
     NodeKind kind;
     char op[3];         /* operator text for N_BINOP/N_COMPOUND_ASSIGN/N_UNARY */
     char *name;         /* identifier / function name / member name (N_MEMBER) */
-    long ival;           /* literal value, for N_NUM */
-    char *sval;          /* string contents, for N_STR */
+    long ival;           /* literal value, for N_NUM; the case constant, for N_CASE */
+    char *sval;          /* string contents, for N_STR; this marker's own compiler-
+                             generated label, for N_CASE/N_DEFAULT (set once by
+                             gen_stmt()'s N_SWITCH case, then reused when the compare
+                             chain and the body walk both need to reference it) */
     struct Node *a, *b, *c, *d;
     struct Node *next;
     int declType;        /* N_VARDECL: 0=char, 1=int, 2=struct (see TY_* below) */

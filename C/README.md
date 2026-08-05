@@ -142,9 +142,14 @@ to approach the codebase for the first time:
   deliberate scope boundaries for this step, not oversights, and both
   give a clear compile-time error rather than silently doing the
   wrong thing.
-- **Statements:** `if`/`else`, `while`, `for`, `break`, `continue`,
-  `return`, blocks, local declarations (anywhere in a block), empty
-  statement.
+- **Statements:** `if`/`else`, `while`, `do`/`while`, `for`, `switch`/
+  `case`/`default` (integer-constant cases only, real fallthrough,
+  `break` exits the switch - see "How switch works" below), `break`,
+  `continue` (both aware of the loop-vs-switch distinction - `break`
+  exits the nearest enclosing loop *or* switch, `continue` always
+  means the nearest enclosing *loop*, skipping over any switch in
+  between, matching real C), `return`, blocks, local declarations
+  (anywhere in a block), empty statement.
 - **Operators:** `+ - * / % & | ^ ~ ! << >> && || == != < > <= >=`
   `= += -= *= /= %= &= |= ^= <<= >>=` and pre/post `++`/`--`.
   `/` and `%` are correctly signed (truncate toward zero; remainder
@@ -189,8 +194,8 @@ and return values (use `struct Tag *` instead), struct members that
 are themselves a struct-by-value or an array, `union`, `typedef`s
 (so every struct variable/parameter needs the full `struct Tag`
 spelled out - no bare `Tag` after a `typedef struct Tag Tag;`),
-multi-dimensional arrays, floating point, `do`/`while`, `switch`, and
-anything like `printf` (there's no variadic-function support, so no
+multi-dimensional arrays, floating point, and anything like `printf`
+(there's no variadic-function support, so no
 way to accept a runtime-variable number of arguments - `print_int`/
 `print_hex` in `lib/print.h` cover the common cases with fixed-arity
 calls instead). The preprocessor is limited to `#include` - no
@@ -288,6 +293,51 @@ the whole struct at every call boundary, which is genuine additional
 machinery for a pattern (linked lists, trees, anything built with
 `->`) that pointer-passing already covers naturally - shipping that
 first, cleanly, seemed better than shipping both halfway.
+
+### How switch works
+
+`switch (expr) { ... }` compiles to a straight-line compare-and-branch
+chain, not a jump table - there's no dispatch-table machinery anywhere
+in this compiler, so `switch` is really syntax sugar over what you'd
+otherwise write as a chain of `if (x == C1) ... else if (x == C2) ...`.
+`expr` is evaluated once into the primary register and left there
+untouched through the whole chain: every `case` label has to be a
+constant integer literal (optionally negated) - the same restriction a
+global variable's initializer already has, and for the same underlying
+reason - so nothing between the initial evaluation and the last
+comparison ever needs to re-evaluate an expression and disturb it.
+`default` doesn't have to be written last (or be present at all); its
+comparison always runs after every `case` has already been checked,
+regardless of where it appears in the source, matching real C.
+
+**Fallthrough is real**, the same as C: without an explicit `break`,
+execution continues into the next label's statements rather than
+exiting the switch. This falls out for free from how the body compiles
+- every `case`/`default` is just a label, and the statements between
+labels are emitted in source order with nothing in between them, so
+"keep going into the next block" is simply what happens if nothing
+jumps elsewhere first.
+
+**`break` and `continue` are aware of the loop-vs-switch distinction.**
+`break` exits the *nearest* enclosing loop or switch, whichever is
+innermost - real C's own rule. `continue` is narrower: it always means
+the nearest enclosing *loop*, skipping past any switch frames on top of
+it, since a switch has no continue target of its own. A `switch`
+directly inside a `while`/`for`/`do`-`while` body needs exactly this
+distinction to behave correctly - `case N: continue;` must reach the
+loop, not just fall through to the switch's own end - and it's checked
+in `codegen_stmt.c`'s `N_SWITCH`/`N_CONTINUE` handling, not left to
+accident.
+
+**`case`/`default` labels are only recognized directly inside a
+switch's own `{ }`**, not nested inside an inner block or an `if` -
+Duff's-device-style tricks (a label reached by falling into the middle
+of a loop body from outside it) aren't supported. Real C's grammar
+technically allows labels anywhere a statement can appear; skipping
+that keeps both the parser and codegen's "build the compare chain,
+then walk the body in order" strategy considerably simpler, at the cost
+of a style of C essentially nothing outside deliberately obscure code
+relies on.
 
 ### Two-pass compilation
 
@@ -474,12 +524,22 @@ pointer) to check offset computation. `tests/forward.c` checks that
 forward/backward call references both work regardless of declaration
 order. `tests/hello.c` is the basic smoke test for the whole pipeline
 (BASIC stub, zero-page init, stack init, `puts`/`putchar`, PETSCII
-case mapping).
+case mapping). `tests/dowhile_switch.c` covers `do`/`while` (body runs
+at least once even when the condition starts false, `continue`
+re-testing the condition rather than skipping it, `break`), `switch`
+(basic dispatch, `default` written *before* its `case`s still checked
+last, negative case constants, real fallthrough with a missing
+`break`), a `switch` nested directly inside a `while` loop (confirming
+`break` exits only the switch while `continue` still reaches the
+loop - the case most likely to silently break if the loop/switch
+context stack were wrong), and a switch nested inside another switch
+(confirming the inner switch's own `break` doesn't leak out to the
+outer one).
 
-Run all seven:
+Run all eight:
 
 ```sh
-for f in hello features forward pointers recursion include structs; do
+for f in hello features forward pointers recursion include structs dowhile_switch; do
     ./cc64 tests/$f.c -o tests/$f.asm
     ./c64asm tests/$f.asm -o tests/$f.prg --listing tests/$f.lst
     python3 mini6502.py tests/$f.prg tests/$f.lst
@@ -488,6 +548,7 @@ done
 
 ## Roadmap
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (`do`/`while`, `switch`,
-a `printf`-lite), other language/tooling ideas not yet scheduled, and
-the standard library's own open items.
+See [`ROADMAP.md`](ROADMAP.md) for what's next (a `printf`-lite is the
+main remaining item from the original next-steps list - `do`/`while`
+and `switch` are both done), other language/tooling ideas not yet
+scheduled, and the standard library's own open items.

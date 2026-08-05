@@ -32,12 +32,16 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   (simpler dependency story, but re-deriving already-solved problems
   like joystick/keyboard reading a second time). Not yet decided
   either way.
-- **Shared testing infrastructure.** `mini6502.py` (in `asm/examples/`)
-  already tests both `c64asm` output directly and `cc64`-generated
-  `.asm`/`.prg` files (`C/`'s own test loop calls it). It's a genuine
-  shared piece of infrastructure living inside one subproject's
-  directory rather than somewhere neutral — fine for now, but worth
-  reconsidering if a third consumer ever shows up.
+- **Two separate `mini6502.py` copies exist** — `asm/examples/mini6502.py`
+  (actively developed: CIA keyboard/joystick emulation, zero-page
+  KERNAL poisoning, ~1300 lines) and `C/bin/mini6502.py` (a much
+  smaller, ~350-line copy, apparently untouched since `cc64`'s very
+  first two commits). `C/README.md`'s documented test loop invokes a
+  bare `mini6502.py`, which resolves to whichever copy sits next to it
+  depending on where the loop is actually run from — the two aren't
+  guaranteed to agree on what they can execute. Worth deciding whether
+  `C/`'s copy should be replaced with (or symlinked to) `asm/`'s more
+  complete one, or whether the two genuinely need to diverge.
 
 ## Ideas without an owner yet
 
