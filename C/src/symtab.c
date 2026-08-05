@@ -51,6 +51,12 @@ FnSym *g_curfn = NULL; /* NULL at file scope; set by pass_b() while parsing one 
 StructDef g_structs[64];
 int g_nstructs = 0;
 
+EnumConst g_enumconsts[512];
+int g_nenumconsts = 0;
+
+char g_enumtags[64][64];
+int g_nenumtags = 0;
+
 GSym *find_global(const char *name) {
     for (int i = 0; i < g_nglobals; i++)
         if (strcmp(g_globals[i].name, name) == 0) return &g_globals[i];
@@ -65,6 +71,16 @@ LSym *find_local(const char *name) {
     for (int i = 0; i < g_nlocals; i++)
         if (strcmp(g_locals[i].name, name) == 0) return &g_locals[i];
     return NULL;
+}
+EnumConst *find_enum_const(const char *name) {
+    for (int i = 0; i < g_nenumconsts; i++)
+        if (strcmp(g_enumconsts[i].name, name) == 0) return &g_enumconsts[i];
+    return NULL;
+}
+int find_enum_tag(const char *name) {
+    for (int i = 0; i < g_nenumtags; i++)
+        if (strcmp(g_enumtags[i], name) == 0) return 1;
+    return 0;
 }
 
 /* putchar/puts/peek/poke/printf are handled directly in codegen_expr.c's
@@ -195,6 +211,11 @@ CType infer_type(Node *n) {
                 if (g->isArray) return (CType){ g->type, 1, g->structTag };
                 return (CType){ g->type, g->isPointer, g->structTag };
             }
+            /* An enum constant isn't stored as a GSym at all (see
+             * EnumConst's own comment in cc64.h) - it's just an int
+             * value, checked last since locals/globals are far more
+             * common and this keeps their lookup unchanged. */
+            if (find_enum_const(n->name)) return (CType){ TY_INT, 0, -1 };
             fatal(n->line, "undeclared identifier '%s'", n->name);
             return (CType){ TY_INT, 0, -1 }; /* unreachable; fatal() doesn't return */
         }

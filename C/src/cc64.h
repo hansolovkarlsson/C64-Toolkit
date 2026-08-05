@@ -145,7 +145,7 @@
 
 typedef enum {
     T_EOF, T_IDENT, T_NUM, T_CHARLIT, T_STRLIT,
-    T_INT, T_CHAR, T_VOID, T_STRUCT, T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
+    T_INT, T_CHAR, T_VOID, T_STRUCT, T_ENUM, T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
     T_BREAK, T_CONTINUE, T_DO, T_SWITCH, T_CASE, T_DEFAULT,
     T_LPAREN, T_RPAREN, T_LBRACE, T_RBRACE, T_LBRACKET, T_RBRACKET,
     T_SEMI, T_COMMA, T_DOT, T_ARROW, T_COLON,
@@ -248,6 +248,21 @@ typedef struct {
     int defined;
 } StructDef;
 
+/* One `enum` constant - just a name and its integer value. Unlike
+ * StructDef, there's no per-enum GROUPING tracked here at all: `enum
+ * Tag { ... }`'s own tag (if given) is recorded separately, in
+ * g_enumtags below, purely so a later `enum Tag` type USE can be
+ * checked against something ("was this tag ever actually defined?"),
+ * not because this compiler ever needs to know which specific enum a
+ * given constant or value came from - using `enum Tag` as a type
+ * anywhere is just an alias for `int` (see parse_type_prefix() in
+ * parser.c), and every enumerator from every `enum` in the file, no
+ * matter which one, lives in this one flat, ungrouped table. */
+typedef struct {
+    char name[64];
+    long value;
+} EnumConst;
+
 /* A global variable's declared shape. Globals live at a fixed,
  * compile-time-known address (a label), so - unlike locals - they
  * don't need a "which function owns this" association. */
@@ -297,10 +312,19 @@ extern int g_nlocals;
 extern FnSym *g_curfn; /* NULL at file scope; set while compiling one function's body */
 extern StructDef g_structs[64];
 extern int g_nstructs;
+extern EnumConst g_enumconsts[512];
+extern int g_nenumconsts;
+extern char g_enumtags[64][64]; /* names of every tagged `enum Tag { ... }` seen so
+                                    far - just for validating a later `enum Tag` type
+                                    use, unlike g_structs there's no per-tag struct
+                                    here, since an enum tag carries no other data */
+extern int g_nenumtags;
 
 GSym *find_global(const char *name);
 FnSym *find_func(const char *name);
 LSym *find_local(const char *name);
+EnumConst *find_enum_const(const char *name);
+int find_enum_tag(const char *name); /* 1 if this tag was defined via 'enum Tag { ... };', else 0 */
 int is_builtin(const char *name);
 void register_local(const char *name, int type, int isPointer, int structTag,
                      int isArray, int arrLen, int isParam, int line);

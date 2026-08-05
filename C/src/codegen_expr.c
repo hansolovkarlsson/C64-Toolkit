@@ -141,7 +141,12 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
             return;
         }
         GSym *g = find_global(n->name);
-        if (!g) fatal(n->line, "undeclared identifier '%s'", n->name);
+        if (!g) {
+            if (find_enum_const(n->name))
+                fatal(n->line, "'%s' is an enum constant, not a variable - "
+                                "it has no address and can't be assigned to", n->name);
+            fatal(n->line, "undeclared identifier '%s'", n->name);
+        }
         if (g->isArray) fatal(n->line, "'%s' is an array; use an index", n->name);
         global_label(lv->label, sizeof(lv->label), n->name);
         lv->type = g->type;
@@ -681,7 +686,24 @@ void gen_expr_to_R(Node *n) {
              * first element (its base address, same bytes either way) */
             LSym *l = g_curfn ? find_local(n->name) : NULL;
             GSym *g = l ? NULL : find_global(n->name);
-            if (!l && !g) fatal(n->line, "undeclared identifier '%s'", n->name);
+            if (!l && !g) {
+                /* Not a variable - check whether it's an enum constant
+                 * (see EnumConst's own comment in cc64.h) before giving
+                 * up. An enum constant has no storage at all, so it
+                 * compiles to exactly the same immediate-load code an
+                 * N_NUM literal with the same value would - matching
+                 * infer_type()'s N_IDENT case, which already treats one
+                 * as a plain int. */
+                EnumConst *ec = find_enum_const(n->name);
+                if (ec) {
+                    emit("    LDA #<%ld", ec->value);
+                    emit("    STA __zpR");
+                    emit("    LDA #>%ld", ec->value);
+                    emit("    STA __zpR+1");
+                    return;
+                }
+                fatal(n->line, "undeclared identifier '%s'", n->name);
+            }
             if ((l && l->isArray) || (g && g->isArray)) {
                 char lbl[96];
                 if (l) local_label(lbl, sizeof(lbl), g_curfn->name, n->name);
@@ -730,7 +752,13 @@ void gen_expr_to_R(Node *n) {
                 if (l) local_label(lbl, sizeof(lbl), g_curfn->name, operand->name);
                 else {
                     GSym *g = find_global(operand->name);
-                    if (!g) fatal(operand->line, "undeclared identifier '%s'", operand->name);
+                    if (!g) {
+                        if (find_enum_const(operand->name))
+                            fatal(operand->line, "'%s' is an enum constant, not a "
+                                                  "variable - it has no address",
+                                                  operand->name);
+                        fatal(operand->line, "undeclared identifier '%s'", operand->name);
+                    }
                     global_label(lbl, sizeof(lbl), operand->name);
                 }
                 emit("    LDA #<%s", lbl);

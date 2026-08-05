@@ -90,7 +90,8 @@ to approach the codebase for the first time:
 
 - **Types:** `int` (16-bit, signed), `char` (8-bit, **unsigned** - see
   below), `void`, single-level pointers to any of those (`int *`,
-  `char *`, `struct Tag *`), and `struct`.
+  `char *`, `struct Tag *`), `struct`, and `enum` (always just `int` -
+  see "How enum works" below).
 - **Declarations:** globals and locals, with an optional 1-D array
   form (`int a[10];`, `char buf[40];`, `struct Point pts[10];`), and
   an optional constant literal initializer for scalar (non-pointer,
@@ -142,6 +143,16 @@ to approach the codebase for the first time:
   deliberate scope boundaries for this step, not oversights, and both
   give a clear compile-time error rather than silently doing the
   wrong thing.
+- **`enum`:** `enum [Tag] { NAME [= value], ... };`, with a tag
+  optional (unlike `struct`'s own required one) and C's usual auto-
+  increment (each enumerator defaults to one more than the last, zero
+  for the first, unless given an explicit `= value`). Each enumerator
+  becomes a compile-time integer constant usable anywhere one is
+  needed: in ordinary expressions, as a `switch` `case` value, as an
+  array size, or as a global initializer - see "How enum works" below
+  for exactly how far that goes and the one real restriction it has
+  (an enumerator's own value must be a literal, not another
+  enumerator's expression).
 - **Statements:** `if`/`else`, `while`, `do`/`while`, `for`, `switch`/
   `case`/`default` (integer-constant cases only, real fallthrough,
   `break` exits the switch - see "How switch works" below), `break`,
@@ -295,6 +306,63 @@ the whole struct at every call boundary, which is genuine additional
 machinery for a pattern (linked lists, trees, anything built with
 `->`) that pointer-passing already covers naturally - shipping that
 first, cleanly, seemed better than shipping both halfway.
+
+### How enum works
+
+`enum [Tag] { NAME [= value], ... };` never creates a real distinct
+type at runtime - every enumerator is just a compile-time `int`
+constant (see `EnumConst` in `cc64.h`), and `enum Tag` used later as a
+type (a variable, parameter, return type, or struct member) is nothing
+more than an alias for `int`: no new storage representation, no
+runtime tag, no way to tell at runtime that a value "came from" an
+enum at all - exactly like real C. Two consequences fall out of that
+directly: an enum constant can be used absolutely anywhere a plain
+`int` constant makes sense (ordinary expressions, a `switch` `case`
+label, an array size, a global initializer), and a `switch` over an
+`enum`-typed value works with zero special-casing in `codegen_stmt.c`
+- it's already just switching on an `int`.
+
+**The tag is optional**, unlike `struct`'s own required one -
+`enum { RED, GREEN, BLUE };` (no tag at all) is completely valid, and
+common, since the constants themselves are what typically matter, not
+a name for the type. A tag only needs to exist at all if you want to
+later declare something `enum Tag`-typed; giving one costs nothing
+otherwise. **Unlike a struct tag, an enum tag can never be forward-
+referenced** - real C has no equivalent of `struct Tag;`'s incomplete
+forward declaration for enums, so `enum Tag` used as a type requires
+that tag to be *fully* defined earlier in the file already (checked in
+`parse_type_prefix()`, `src/parser.c`); there's no "incomplete enum
+pointer" escape hatch the way an incomplete struct has, because enums
+are never pointer-only-until-complete in the first place - there's
+nothing about an enum's own "size" that a pointer could sidestep.
+
+**An enumerator's own value must be a literal**, not an expression
+referencing an earlier enumerator in the same `enum` (`B = A + 1`
+doesn't work) - the same "no constant-expression evaluator yet"
+restriction a global initializer, a `case` label, and an array size
+all already have (see `parse_const_value()`, `src/parser.c`, which is
+also what lets all three of *those* contexts accept an enum constant
+by name, not just a bare literal, in the first place). Omitting
+`= value` falls back to C's usual auto-increment: one more than the
+previous enumerator, or zero for the very first.
+
+Because top-level declarations (globals, function signatures, struct
+members) are all resolved in a single forward pass through the file
+(`pass_a()`, see "Two-pass compilation" below), an `enum` must be
+*defined* before any TOP-LEVEL use of its tag as a type or its
+constants as an array size/initializer - unlike enum constants used
+inside a function body (as an ordinary expression, or a `switch` case),
+which can reference an `enum` defined anywhere in the file at all,
+since function bodies aren't parsed for real until `pass_b()`, which
+only starts once `pass_a()` (and therefore every `enum` in the file)
+is already finished.
+
+**`enum` definitions are top-level only**, same restriction `struct`
+has - there's no such thing as a local `enum { ... };` declared inside
+a function body. A constant defined by a top-level `enum`, though, can
+still be used to size a *local* array just fine; only the *definition*
+itself needs to be at the top level, not every place its constants get
+used.
 
 ### How switch works
 
@@ -584,12 +652,24 @@ outer one). `tests/printf.c` covers every specifier (`%d`/`%x`/`%c`/
 widths (a value needing 1, 2, 3, or 4 hex digits), a format string with
 no specifiers at all and one with only a specifier and no literal text,
 computed expression arguments (not just literals), and `%%` at both the
-very start and very end of a format string.
+very start and very end of a format string. `tests/enum.c` covers an
+anonymous enum (plain auto-increment) and a tagged one (explicit
+values, including negative, mixed with auto-increment continuing from
+the last explicit one), an enum constant used in ordinary expressions,
+as every case in a real `switch` (including two cases sharing one
+body), as both a global and a local array's size, as a global
+initializer, and as a `struct` member's type and a function parameter's
+type (`enum Status`) - the last two exercising the enum-tag-must-
+already-be-defined check specifically, alongside separate error-path
+checks (not part of the passing suite) for a misspelled/undefined tag,
+a duplicate tag, a duplicate enumerator, an enumerator colliding with
+a global or builtin name, and trying to assign to or take the address
+of an enum constant.
 
-Run all nine:
+Run all ten:
 
 ```sh
-for f in hello features forward pointers recursion include structs dowhile_switch printf; do
+for f in hello features forward pointers recursion include structs dowhile_switch printf enum; do
     ./cc64 tests/$f.c -o tests/$f.asm
     ./c64asm tests/$f.asm -o tests/$f.prg --listing tests/$f.lst
     python3 mini6502.py tests/$f.prg tests/$f.lst
@@ -601,4 +681,5 @@ done
 See [`ROADMAP.md`](ROADMAP.md) for other language/tooling ideas not
 yet scheduled and the standard library's own open items - every item
 from the original "next steps" list (`do`/`while`, `switch`, a
-`printf`-lite) is now done.
+`printf`-lite) is now done, and `enum` (picked up separately from that
+list) is too.

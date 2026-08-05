@@ -41,6 +41,22 @@
    was never added to `lib/print.h` (see that header's own comment).
    See `README.md`'s "How printf works" for the full design and
    `tests/printf.c` for the regression coverage.
+7. ~~`enum`~~ — done, picked up separately since this list is done
+   otherwise. `enum [Tag] { NAME [= value], ... }` never creates a real
+   type: every enumerator is a compile-time `int` constant, and
+   `enum Tag` used as a type is nothing but an alias for `int` - no
+   runtime representation, no way to tell at runtime a value "came
+   from" an enum at all, matching real C. That's what lets an
+   enumerator be used absolutely anywhere a plain `int` constant is
+   valid: ordinary expressions, `switch` case labels, array sizes,
+   global initializers - all four now accept either a literal or a
+   named enum constant via one shared `parse_const_value()` helper
+   (`src/parser.c`). The tag is optional (unlike `struct`'s required
+   one) but, when given, can never be forward-referenced the way a
+   struct tag can - real C has no incomplete-enum-declaration concept,
+   so `enum Tag` used as a type requires that tag to already be fully
+   defined. See `README.md`'s "How enum works" for the full design and
+   `tests/enum.c` for the regression coverage.
 
 ## Other language ideas, not yet scheduled
 
@@ -51,7 +67,6 @@ where there's something specific worth knowing before starting on one.
 
 ### Data types
 
-- `enum`
 - `union`
 - `long`/`short` — `int` is currently always exactly 16 bits; there's
   no smaller or larger integer type.

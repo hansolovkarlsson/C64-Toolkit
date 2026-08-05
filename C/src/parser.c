@@ -90,7 +90,7 @@ static Token *expect(TokKind k, const char *what) {
     return advance();
 }
 
-static int is_type_kw(TokKind k) { return k == T_INT || k == T_CHAR || k == T_VOID || k == T_STRUCT; }
+static int is_type_kw(TokKind k) { return k == T_INT || k == T_CHAR || k == T_VOID || k == T_STRUCT || k == T_ENUM; }
 
 /* Several parsing functions call each other in a cycle that doesn't
  * follow a strict "top to bottom" order (parse_primary() needs
@@ -147,6 +147,29 @@ static void parse_type_prefix(int *type, int *structTag, int *isPointer) {
         char *tag = advance()->text;
         *type = TY_STRUCT;
         *structTag = find_or_create_struct_tag(tag);
+    } else if (check(T_ENUM)) {
+        /* `enum Tag` used as a type is always just `int` (see
+         * EnumConst's own comment in cc64.h) - the tag is required
+         * (matching struct's own requirement above), and this branch is
+         * only ever reached for a type USE ("enum Color c;"), never a
+         * definition ("enum Color { ... };"), since pass_a()/pass_b()
+         * both detect and fully handle the definition form before
+         * falling through to the general parse_type_prefix() path - see
+         * parse_enum_def(). Unlike `struct Tag` just above, which is
+         * allowed to reference a tag that's only been forward-declared
+         * so far (find_or_create_struct_tag() makes an incomplete entry
+         * on demand), `enum Tag` has to already be FULLY defined by
+         * this point - real C has no such thing as an incomplete enum
+         * forward reference, so there's nothing to create here, only to
+         * check for; a misspelled or not-yet-defined tag is a compile
+         * error immediately, not something deferred. */
+        advance();
+        if (!check(T_IDENT)) fatal(cur()->line, "expected enum tag name after 'enum'");
+        Token *tagTok = advance();
+        if (!find_enum_tag(tagTok->text))
+            fatal(tagTok->line, "'enum %s' used here but never defined", tagTok->text);
+        *type = TY_INT;
+        *structTag = -1;
     } else if (check(T_INT) || check(T_CHAR) || check(T_VOID)) {
         *type = type_from_tok(advance()->kind);
         *structTag = -1;
@@ -207,6 +230,107 @@ static void parse_struct_def(void) {
     sd->defined = 1;
 }
 
+/* Parses a constant integer for a context that needs one this early -
+ * a global initializer, a `case` label, an array size - none of which
+ * have a real constant-expression evaluator behind them (see
+ * `.struct`'s identical restriction in c64asm-reference.md §10 for the
+ * sibling assembler's take on the same underlying limitation: nothing
+ * here runs before a symbol table exists to look anything more general
+ * up in). Accepts a plain literal (decimal/hex/char) or the name of an
+ * already-defined enum constant, each optionally negated by a leading
+ * '-' when `allowNeg` is set (array sizes pass 0 - a negative size is
+ * never valid, so there's nothing to allow). `what` names the context
+ * in the error message when neither matches. */
+static long parse_const_value(int allowNeg, const char *what) {
+    int neg = 0;
+    if (allowNeg && check(T_MINUS)) { neg = 1; advance(); }
+    if (check(T_NUM) || check(T_CHARLIT)) {
+        long v = advance()->ival;
+        return neg ? -v : v;
+    }
+    if (check(T_IDENT)) {
+        EnumConst *ec = find_enum_const(cur()->text);
+        if (ec) { advance(); return neg ? -ec->value : ec->value; }
+    }
+    fatal(cur()->line, "%s must be a constant integer literal or a "
+                        "previously-declared enum constant", what);
+    return 0; /* unreachable */
+}
+
+/* `enum [Tag] { NAME [= value], ... };` - parsed and fully resolved
+ * (every enumerator's actual integer value) entirely here in pass_a,
+ * the same as struct - a purely compile-time source of named
+ * constants, nothing here emits any code or storage. Unlike struct,
+ * the tag (if given at all - it's optional here, unlike struct's own
+ * required tag) isn't grouped with anything: `enum Tag` used later as
+ * a TYPE is just an alias for `int` (see parse_type_prefix()), so
+ * there's no per-enum layout to look back up the way a struct
+ * reference needs - only whether the tag was ever defined at all
+ * (g_enumtags, checked by parse_type_prefix()) and the flat list of
+ * constants themselves (g_enumconsts, symtab.c), with no association
+ * kept between a constant and which enum it came from. An enumerator's
+ * own value must be a plain literal, optionally negated - NOT a
+ * reference to an earlier enumerator in the same enum (`B = A + 1`
+ * doesn't work) - for the same "no constant-expression evaluator yet"
+ * reason parse_const_value() above exists at all; omit `= value` and
+ * it defaults to one more than the previous enumerator (zero for the
+ * first), exactly like real C.
+ *
+ * Unlike a struct tag, an enum tag can never be forward-referenced -
+ * real C doesn't allow `enum Tag;` as an incomplete forward
+ * declaration the way `struct Tag;` works, so there's no equivalent of
+ * find_or_create_struct_tag()'s "create an incomplete entry" case here
+ * to worry about; a tag simply doesn't exist until this function
+ * finishes defining it. */
+static void parse_enum_def(void) {
+    advance(); /* 'enum' */
+    char *tagname = NULL;
+    if (check(T_IDENT)) {
+        Token *tagTok = advance();
+        tagname = tagTok->text;
+        if (find_enum_tag(tagname))
+            fatal(tagTok->line, "redefinition of enum '%s'", tagname);
+    }
+    expect(T_LBRACE, "'{'");
+    if (check(T_RBRACE)) fatal(cur()->line, "'enum' requires at least one enumerator");
+    long next = 0;
+    while (!check(T_RBRACE)) {
+        if (!check(T_IDENT)) fatal(cur()->line, "expected an enumerator name");
+        Token *nt = advance();
+        char *ename = nt->text;
+        long value = next;
+        if (check(T_ASSIGN)) {
+            advance();
+            int neg = 0;
+            if (check(T_MINUS)) { neg = 1; advance(); }
+            if (!check(T_NUM) && !check(T_CHARLIT))
+                fatal(cur()->line, "enumerator '%s's value must be a constant "
+                                    "integer literal", ename);
+            value = advance()->ival;
+            if (neg) value = -value;
+        }
+        if (is_builtin(ename)) fatal(nt->line, "'%s' is a reserved builtin name", ename);
+        if (find_enum_const(ename)) fatal(nt->line, "redefinition of enumerator '%s'", ename);
+        if (find_global(ename)) fatal(nt->line, "'%s' is already declared as a global", ename);
+        if (find_func(ename)) fatal(nt->line, "'%s' is already declared as a function", ename);
+        if (g_nenumconsts >= (int)(sizeof(g_enumconsts)/sizeof(g_enumconsts[0])))
+            fatal(nt->line, "too many enum constants");
+        EnumConst *ec = &g_enumconsts[g_nenumconsts++];
+        strncpy(ec->name, ename, sizeof(ec->name)-1);
+        ec->value = value;
+        next = value + 1;
+        if (check(T_COMMA)) { advance(); continue; } /* trailing comma before '}' is fine too */
+        break;
+    }
+    expect(T_RBRACE, "'}'");
+    expect(T_SEMI, "';'");
+    if (tagname) {
+        if (g_nenumtags >= (int)(sizeof(g_enumtags)/sizeof(g_enumtags[0])))
+            fatal(0, "too many enum tags");
+        strncpy(g_enumtags[g_nenumtags++], tagname, sizeof(g_enumtags[0])-1);
+    }
+}
+
 /* One iteration of this loop handles exactly one top-level
  * declaration: a `struct Tag { ... };` definition, a function
  * (`type [*] name ( params ) { body }`, body skipped, not parsed), or
@@ -228,6 +352,17 @@ void pass_a(void) {
          * general path below. */
         if (check(T_STRUCT) && peekAt(1)->kind == T_IDENT && peekAt(2)->kind == T_LBRACE) {
             parse_struct_def();
+            continue;
+        }
+        /* Same idea for `enum`, except the tag is optional here, so
+         * there are two definition shapes to recognize instead of
+         * struct's one: anonymous ("enum {") and tagged ("enum Tag {").
+         * Anything else starting with 'enum' (just "enum Tag" with no
+         * '{' following) falls through to the general type-prefix path
+         * below, same as `struct Tag *next;` already does. */
+        if (check(T_ENUM) && (peekAt(1)->kind == T_LBRACE ||
+                               (peekAt(1)->kind == T_IDENT && peekAt(2)->kind == T_LBRACE))) {
+            parse_enum_def();
             continue;
         }
 
@@ -305,9 +440,8 @@ void pass_a(void) {
         if (check(T_LBRACKET)) {
             if (rIsPointer) fatal(cur()->line, "arrays of pointers are not supported in this version");
             advance();
-            if (!check(T_NUM)) fatal(cur()->line, "expected array size");
             g.isArray = 1;
-            g.arrLen = (int)advance()->ival;
+            g.arrLen = (int)parse_const_value(0, "array size");
             expect(T_RBRACKET, "']'");
         }
         if (rtype == TY_STRUCT && !rIsPointer)
@@ -316,13 +450,8 @@ void pass_a(void) {
             advance();
             if (g.isPointer) fatal(cur()->line, "pointer initializers are not supported in this version");
             if (g.type == TY_STRUCT) fatal(cur()->line, "struct initializers are not supported in this version");
-            int neg = 0;
-            if (check(T_MINUS)) { neg = 1; advance(); }
-            long v;
-            if (check(T_NUM) || check(T_CHARLIT)) v = advance()->ival;
-            else { fatal(cur()->line, "global initializers must be a constant literal"); v = 0; }
             g.hasInit = 1;
-            g.initVal = neg ? -v : v;
+            g.initVal = parse_const_value(1, "global initializer's value");
         }
         expect(T_SEMI, "';'");
         if (find_global(g.name)) fatal(cur()->line, "redefinition of global '%s'", g.name);
@@ -618,8 +747,7 @@ static Node *parse_vardecl(void) {
     if (check(T_LBRACKET)) {
         if (isPointer) fatal(cur()->line, "arrays of pointers are not supported in this version");
         advance();
-        if (!check(T_NUM)) fatal(cur()->line, "expected array size");
-        n->declArrLen = (int)advance()->ival;
+        n->declArrLen = (int)parse_const_value(0, "array size");
         expect(T_RBRACKET, "']'");
     }
     if (type == TY_STRUCT && !isPointer)
@@ -653,12 +781,13 @@ static Node *parse_vardecl(void) {
  * codegen's compare-chain-then-body-in-order strategy (see N_SWITCH in
  * codegen_stmt.c) much simpler.
  *
- * Every `case` value must itself be a constant literal (a plain number
- * or char literal, optionally negated) - the same restriction a global
- * variable's initializer already has (see pass_a()), and for a closely
- * related reason: codegen compares the switch value against each case
- * inline, as an immediate operand baked into the generated CMP
- * instructions, which only works for a value known at compile time. */
+ * Every `case` value must be something parse_const_value() accepts - a
+ * plain literal or an enum constant, optionally negated - the same
+ * restriction a global variable's initializer already has (see
+ * pass_a()), and for a closely related reason: codegen compares the
+ * switch value against each case inline, as an immediate operand baked
+ * into the generated CMP instructions, which only works for a value
+ * known at compile time. */
 static Node *parse_switch(void) {
     Token *t = advance(); /* 'switch' */
     expect(T_LPAREN, "'('");
@@ -672,12 +801,7 @@ static Node *parse_switch(void) {
         Node *item;
         if (check(T_CASE)) {
             Token *ct = advance();
-            int neg = 0;
-            if (check(T_MINUS)) { neg = 1; advance(); }
-            if (!check(T_NUM) && !check(T_CHARLIT))
-                fatal(cur()->line, "'case' requires a constant integer literal");
-            long v = advance()->ival;
-            if (neg) v = -v;
+            long v = parse_const_value(1, "'case' value");
             expect(T_COLON, "':'");
             for (int i = 0; i < nseen; i++)
                 if (seen[i] == v) fatal(ct->line, "duplicate 'case %ld' in this switch", v);
@@ -824,10 +948,21 @@ void pass_b(void) {
             expect(T_SEMI, "';'");
             continue;
         }
+        /* Same for an enum definition - both the anonymous and tagged
+         * forms, matching pass_a()'s own two-shape detection. */
+        if (check(T_ENUM) && (peekAt(1)->kind == T_LBRACE ||
+                               (peekAt(1)->kind == T_IDENT && peekAt(2)->kind == T_LBRACE))) {
+            advance(); /* 'enum' */
+            if (check(T_IDENT)) advance(); /* optional tag */
+            skip_balanced(T_LBRACE, T_RBRACE);
+            expect(T_SEMI, "';'");
+            continue;
+        }
 
         /* type keyword - already recorded by pass_a, just skip it.
-         * `struct Tag` is two tokens where int/char/void is one. */
-        if (check(T_STRUCT)) { advance(); advance(); } else advance();
+         * `struct Tag`/`enum Tag` are two tokens where int/char/void is
+         * one. */
+        if (check(T_STRUCT) || check(T_ENUM)) { advance(); advance(); } else advance();
         if (check(T_STAR)) advance(); /* optional pointer '*'; already validated in pass A */
         char *name = advance()->text; /* ident */
 

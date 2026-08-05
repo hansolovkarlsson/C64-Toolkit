@@ -24,6 +24,12 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   variadic-function support, by requiring a compile-time-constant
   format string and expanding each call at compile time instead - see
   `C/README.md`'s "How printf works".
+- `cc64` also picked up `enum` (from `C/ROADMAP.md`'s "not yet
+  scheduled" list, done ahead of everything else there) - every
+  enumerator is just a compile-time `int` constant, no new runtime
+  representation, usable anywhere a plain `int` constant already was
+  (expressions, `switch` cases, array sizes, global initializers). See
+  `C/README.md`'s "How enum works".
 
 ## Open cross-project questions
 
