@@ -1983,7 +1983,7 @@ __L31:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
 __L30:
@@ -2052,7 +2052,7 @@ __L35:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2116,7 +2116,7 @@ __L33:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     JSR __rt_push
@@ -2140,7 +2140,7 @@ __L33:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     JSR __fn_print_int_pushframe
@@ -2160,7 +2160,7 @@ __L33:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2188,7 +2188,7 @@ __L33:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2205,7 +2205,7 @@ __L33:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     LDA __zpR2
@@ -2229,7 +2229,7 @@ __L33:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2257,7 +2257,7 @@ __L33:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     CLC
@@ -2270,7 +2270,7 @@ __L33:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     JSR __fn_print_int_pushframe
@@ -2290,7 +2290,7 @@ __L33:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2318,7 +2318,7 @@ __L33:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2335,7 +2335,7 @@ __L33:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     LDA __zpR2
@@ -2359,7 +2359,7 @@ __L33:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR

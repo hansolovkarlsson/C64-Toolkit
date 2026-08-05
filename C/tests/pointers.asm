@@ -924,7 +924,7 @@ __fn_swap:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -955,7 +955,7 @@ __fn_swap:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     JSR __rt_pop2
@@ -966,7 +966,7 @@ __fn_swap:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     LDA __fn_swap_v_b
@@ -994,7 +994,7 @@ __fn_swap:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     RTS
@@ -1099,7 +1099,7 @@ __L15:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     JSR __rt_pop2
@@ -1283,7 +1283,7 @@ __L18:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     JSR __rt_pop2
@@ -1563,9 +1563,12 @@ __fn_global_ptr_to_garr0:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     RTS
     RTS
@@ -1653,7 +1656,7 @@ __fn_main:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -1690,7 +1693,7 @@ __fn_main:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     JSR __fn_print_int_pushframe
@@ -1842,7 +1845,7 @@ __L25:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
 __L24:
@@ -1940,9 +1943,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     LDA __zpR
     STA __fn_main_v_p
@@ -1960,7 +1966,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2007,7 +2013,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2077,7 +2083,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2132,7 +2138,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2181,7 +2187,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2207,9 +2213,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     JSR __rt_push
     LDA #<0
@@ -2225,9 +2234,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     JSR __rt_pop2
     SEC
@@ -2483,9 +2495,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     JSR __rt_push
     LDA #<4
@@ -2501,9 +2516,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     JSR __rt_pop2
     JSR __rt_ult16
@@ -2530,9 +2548,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     JSR __rt_push
     LDA #<0
@@ -2548,9 +2569,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     JSR __rt_pop2
     JSR __rt_ult16
@@ -2577,9 +2601,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     JSR __rt_push
     LDA #<2
@@ -2595,9 +2622,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     JSR __rt_pop2
     JSR __rt_eq16
@@ -2682,7 +2712,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2707,9 +2737,12 @@ __L23:
     LDA __zpR+1
     ADC #>__g_garr
     STA __zpAP+1
+    CLC
     LDA __zpAP
+    ADC #0
     STA __zpR
     LDA __zpAP+1
+    ADC #0
     STA __zpR+1
     LDA __zpR
     STA __fn_main_v_p
@@ -2731,7 +2764,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     JSR __rt_push
@@ -2755,7 +2788,7 @@ __L23:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     JSR __fn_print_int_pushframe
@@ -2775,7 +2808,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2798,7 +2831,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2815,7 +2848,7 @@ __L23:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     LDA __zpR2
@@ -2839,7 +2872,7 @@ __L23:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR

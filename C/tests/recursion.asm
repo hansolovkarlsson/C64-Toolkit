@@ -1618,7 +1618,7 @@ __fn_depth_count:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     JSR __rt_push
@@ -1642,7 +1642,7 @@ __fn_depth_count:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     LDA __fn_depth_count_v_n
@@ -1843,7 +1843,7 @@ __L36:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
 __L35:
@@ -1976,7 +1976,7 @@ __L46:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     JSR __rt_push
@@ -2637,7 +2637,7 @@ __fn_main:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     JSR __rt_push
@@ -2661,7 +2661,7 @@ __fn_main:
     LDY #0
     LDA __zpR
     STA (__zpAP),Y
-    INY
+    LDY #1
     LDA __zpR+1
     STA (__zpAP),Y
     JSR __fn_print_int_pushframe
@@ -2681,7 +2681,7 @@ __fn_main:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
@@ -2710,7 +2710,7 @@ __fn_main:
     LDY #0
     LDA (__zpAP),Y
     STA __zpR
-    INY
+    LDY #1
     LDA (__zpAP),Y
     STA __zpR+1
     LDA __zpR
