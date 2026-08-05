@@ -5,9 +5,11 @@ core, memory/bank-switching, CIA/VIC-II/SID chip emulation, and a
 GTK4 front end — built the same way `asm/` and `C/` were, without
 leaning on an existing emulator core.
 
-**Status: scaffolding only.** Nothing is implemented yet - this
-directory currently holds the planned layout and design notes. See
-[`ROADMAP.md`](ROADMAP.md) for the staged build order.
+**Status:** step 1 of the build order is done - a full legal 6502/6510
+instruction set (`src/cpu.c`), verified against Klaus Dormann's 6502
+functional test suite plus a hand-written interrupt/reset check (see
+`tests/cpu/README.md`). Nothing else exists yet - no memory/banking,
+no display, no GTK. See [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
 
@@ -47,9 +49,16 @@ emu/
 
 ## Building
 
-Not yet buildable - see [`ROADMAP.md`](ROADMAP.md) for what's first
-(the CPU core, gated on Dormann's test suite passing, before anything
-else).
+No `bin/c64emu` yet - there's no memory map, display, or entry point
+to build one around. The CPU core has its own standalone correctness
+gate:
+
+```sh
+cd tests/cpu && make fetch && make run-all
+```
+
+See [`ROADMAP.md`](ROADMAP.md) for what's next (memory/banking, then a
+minimal GTK4 shell).
 
 ## ROM images
 

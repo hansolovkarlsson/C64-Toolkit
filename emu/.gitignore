@@ -6,3 +6,11 @@ bin/c64emu
 # roms/README.md for the expected filenames.
 roms/*
 !roms/README.md
+
+# Klaus Dormann's 6502 functional test suite (GPL-3.0) - fetched on
+# demand via `make fetch` in tests/cpu/, not vendored. See
+# tests/cpu/README.md.
+tests/cpu/*.bin
+tests/cpu/*.lst
+tests/cpu/test_cpu
+tests/cpu/test_interrupts

@@ -7,15 +7,24 @@ each piece will live.
 
 ## Build order
 
-1. **6502/6510 CPU core** - the full instruction set (not just the
-   subset `cc64` emits - see `README.md`'s "Why this exists"), with a
-   per-instruction cycle-count table from the start rather than bolted
-   on later, since VIC-II/CIA timing later on depends on the CPU
-   already being cycle-stepped, not just instruction-stepped.
-   **Correctness gate:** Klaus Dormann's 6502 functional test suite
-   (a well-known, widely-used validation ROM that exercises every
-   legal opcode/addressing-mode combination and traps on failure) -
-   nothing else starts until this passes.
+1. ~~**6502/6510 CPU core**~~ - done (`src/cpu.c`/`src/cpu.h`): the
+   full legal instruction set, addressing modes, and per-instruction
+   cycle counts (including the conditional +1 for page-crossing on
+   indexed reads, and the branch-taken/+1-page-crossed cases), talking
+   to memory only through a `CpuBus` read/write vtable so it has no
+   idea yet whether it's driving a flat test-harness RAM array or the
+   real bank-switched map (step 2, below) - that decoupling is what
+   let it be verified in isolation. Decimal-mode ADC/SBC follow the
+   documented NMOS quirk where N/V/Z are derived from different
+   (partially uncorrected) intermediate values than the accumulator
+   result itself, not just "do BCD arithmetic and set flags from that"
+   - see `src/cpu.c`'s own header comment and `op_adc()`/`op_sbc()`.
+   Passes Klaus Dormann's 6502 functional test suite (every legal
+   opcode/addressing-mode combination) on the first full run, plus a
+   hand-written interrupt/reset check (`tests/cpu/test_interrupts.c`)
+   for cpu_reset()/BRK/IRQ/NMI/RTI, since Dormann's suite deliberately
+   never triggers a real interrupt mid-test and so can't exercise that
+   path at all. See `tests/cpu/README.md` for how to run both.
 2. **Memory map + bank switching** - the 64K address space, and the
    6510 I/O port at `$01` that controls whether BASIC ROM/KERNAL ROM/
    character ROM or plain RAM is visible in their overlapping address
