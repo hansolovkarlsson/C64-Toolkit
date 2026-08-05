@@ -4,8 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-This is not a single project — it's two independent, self-contained C64
-toolchain projects plus reference material:
+This repo bundles two independent, self-contained C64 toolchain
+projects, each merged in via `git subtree` (so `git log`/`blame` on a
+file still reaches that project's pre-merge history — see
+`git log <path> --follow` limitations if a plain `git log` on a path
+looks truncated; `git blame` always works):
 
 - **`asm/`** — `c64asm`, a two-pass 6502/6510 assembler for the C64, in
   three interchangeable, byte-identical-output implementations (Python,
@@ -16,9 +19,6 @@ toolchain projects plus reference material:
 - **`C/`** — `cc64`, a small C-to-6502 compiler that targets `c64asm`'s
   exact syntax as its output. Depends on `asm/` at build/run time (see
   below).
-- **`Computes Gazette/`, `resources/`** — reference material (old
-  magazines, books, other people's C64 projects) — not code belonging to
-  this repo's own build.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
