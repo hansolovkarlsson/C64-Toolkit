@@ -92,6 +92,23 @@ static Token *expect(TokKind k, const char *what) {
 
 static int is_type_kw(TokKind k) { return k == T_INT || k == T_CHAR || k == T_VOID || k == T_STRUCT || k == T_UNION || k == T_ENUM; }
 
+/* Whether the CURRENT token starts a type - a keyword (is_type_kw()
+ * above) OR a plain identifier that happens to be a registered
+ * `typedef` name. This is the one place a typedef name's TEXT (not
+ * just its token kind, T_IDENT either way) has to be consulted to
+ * decide "is this a declaration or an expression?" - every call site
+ * that used to check is_type_kw(cur()->kind) alone to make that
+ * decision (pass_a()'s top-level dispatch and parameter parsing,
+ * parse_stmt()'s local-declaration and for-loop-init detection) now
+ * calls this instead. Struct/union member parsing doesn't need this
+ * check at all - a struct/union body is unconditionally a list of
+ * member declarations, nothing else, so it just calls
+ * parse_type_prefix() directly, which is typedef-aware on its own
+ * (see its own comment below). */
+static int cur_is_type(void) {
+    return is_type_kw(cur()->kind) || (check(T_IDENT) && find_typedef(cur()->text) != NULL);
+}
+
 /* Several parsing functions call each other in a cycle that doesn't
  * follow a strict "top to bottom" order (parse_primary() needs
  * parse_assign() for call arguments and parse_expr() for parenthesized
@@ -138,9 +155,35 @@ static int type_from_tok(TokKind k) {
  * next (a function name that might be followed by `(`, a parameter
  * name possibly followed by more parameters, a struct member name
  * followed by `;`, ...), so this only handles the part that's
- * genuinely identical everywhere: `int`, `char`, `void`, or
- * `struct Tag`, then an optional `*`. */
+ * genuinely identical everywhere: `int`, `char`, `void`, `struct Tag`/
+ * `union Tag`/`enum Tag`, or a `typedef` name, then an optional `*`.
+ *
+ * The typedef case is checked FIRST and returns early, rather than
+ * joining the shared `*isPointer = 0; if (check(T_STAR)) ...` tail
+ * below every other branch uses: a typedef name can already BE a
+ * pointer type (`typedef char *String;`), so it needs its own
+ * pointer-to-pointer check (rejecting `String *sp;`, since this
+ * compiler doesn't support pointer-to-pointer at all) rather than
+ * letting the shared tail blindly reset *isPointer to 0 first. */
 static void parse_type_prefix(int *type, int *structTag, int *isPointer) {
+    if (check(T_IDENT)) {
+        TypedefEntry *td = find_typedef(cur()->text);
+        if (td) {
+            Token *nameTok = advance();
+            *type = td->type;
+            *structTag = td->structTag;
+            *isPointer = td->isPointer;
+            if (check(T_STAR)) {
+                if (*isPointer)
+                    fatal(cur()->line, "pointer-to-pointer is not supported in this "
+                                        "version ('%s' is already a pointer type)",
+                                        nameTok->text);
+                *isPointer = 1;
+                advance();
+            }
+            return;
+        }
+    }
     if (check(T_STRUCT) || check(T_UNION)) {
         int wantUnion = check(T_UNION);
         advance();
@@ -388,6 +431,37 @@ static void parse_enum_def(void) {
     }
 }
 
+/* `typedef <type-prefix> Name;` - parsed and fully resolved entirely
+ * here in pass_a, the same as struct/union/enum: a purely compile-time
+ * source of an alias, nothing here emits any code or storage. Reuses
+ * parse_type_prefix() itself for the underlying type-prefix, which is
+ * what makes `typedef struct Tag Tag;`/`typedef int MyInt;`/
+ * `typedef char *String;` all just work with no new type-parsing logic
+ * of its own - see TypedefEntry's own comment in cc64.h for exactly
+ * what this does and doesn't support (no inline anonymous-aggregate
+ * definitions combined with the typedef in one statement, top-level
+ * only, same as struct/union/enum). */
+static void parse_typedef_def(void) {
+    advance(); /* 'typedef' */
+    int type, structTag, isPointer;
+    parse_type_prefix(&type, &structTag, &isPointer);
+    if (!check(T_IDENT)) fatal(cur()->line, "expected an identifier after typedef's type");
+    Token *nameTok = advance();
+    char *name = nameTok->text;
+    if (check(T_LBRACKET)) fatal(cur()->line, "array typedefs are not supported in this version");
+    if (is_builtin(name)) fatal(nameTok->line, "'%s' is a reserved builtin name", name);
+    if (find_typedef(name)) fatal(nameTok->line, "redefinition of typedef '%s'", name);
+    if (find_global(name)) fatal(nameTok->line, "'%s' is already declared as a global", name);
+    if (find_func(name)) fatal(nameTok->line, "'%s' is already declared as a function", name);
+    if (find_enum_const(name)) fatal(nameTok->line, "'%s' is already declared as an enum constant", name);
+    expect(T_SEMI, "';'");
+    if (g_ntypedefs >= (int)(sizeof(g_typedefs)/sizeof(g_typedefs[0])))
+        fatal(nameTok->line, "too many typedefs");
+    TypedefEntry *td = &g_typedefs[g_ntypedefs++];
+    strncpy(td->name, name, sizeof(td->name)-1);
+    td->type = type; td->isPointer = isPointer; td->structTag = structTag;
+}
+
 /* One iteration of this loop handles exactly one top-level
  * declaration: a `struct Tag { ... };` definition, a function
  * (`type [*] name ( params ) { body }`, body skipped, not parsed), or
@@ -397,6 +471,13 @@ static void parse_enum_def(void) {
 void pass_a(void) {
     g_pos = 0;
     while (!check(T_EOF)) {
+        /* Unlike struct/union/enum, `typedef` needs no lookahead to
+         * detect - the keyword itself is unambiguous, never a valid
+         * start of anything else. */
+        if (check(T_TYPEDEF)) {
+            parse_typedef_def();
+            continue;
+        }
         /* A struct DEFINITION (`struct Tag {`) is the one top-level
          * form that doesn't fit the "type [*] name" shape everything
          * else here has - it needs to be recognized before falling
@@ -429,7 +510,7 @@ void pass_a(void) {
             continue;
         }
 
-        if (!is_type_kw(cur()->kind))
+        if (!cur_is_type())
             fatal(cur()->line, "expected type at top level");
         int rtype, rStructTag, rIsPointer;
         parse_type_prefix(&rtype, &rStructTag, &rIsPointer);
@@ -463,7 +544,7 @@ void pass_a(void) {
                 advance();
             } else if (!check(T_RPAREN)) {
                 for (;;) {
-                    if (!is_type_kw(cur()->kind))
+                    if (!cur_is_type())
                         fatal(cur()->line, "expected parameter type");
                     int ptype, pStructTag, pIsPointer;
                     parse_type_prefix(&ptype, &pStructTag, &pIsPointer);
@@ -944,7 +1025,7 @@ static Node *parse_stmt(void) {
         expect(T_LPAREN, "'('");
         Node *init = NULL;
         if (!check(T_SEMI)) {
-            if (is_type_kw(cur()->kind)) init = parse_vardecl(); /* consumes its own ';' */
+            if (cur_is_type()) init = parse_vardecl(); /* consumes its own ';' */
             else { init = node_new(N_EXPRSTMT, cur()->line); init->a = parse_expr(); expect(T_SEMI, "';'"); }
         } else advance();
         Node *cond = NULL;
@@ -968,7 +1049,7 @@ static Node *parse_stmt(void) {
     if (check(T_BREAK)) { Token *t = advance(); expect(T_SEMI, "';'"); return node_new(N_BREAK, t->line); }
     if (check(T_CONTINUE)) { Token *t = advance(); expect(T_SEMI, "';'"); return node_new(N_CONTINUE, t->line); }
     if (check(T_SEMI)) { Token *t = advance(); return node_new(N_EMPTY, t->line); }
-    if (is_type_kw(cur()->kind)) return parse_vardecl();
+    if (cur_is_type()) return parse_vardecl();
     /* Anything else is an expression statement: an expression followed
      * by ';', kept only for its side effects (e.g. a bare function
      * call, or `x = 5;`). */
@@ -1005,6 +1086,24 @@ static Node *parse_block(void) {
 void pass_b(void) {
     g_pos = 0;
     while (!check(T_EOF)) {
+        /* typedef - already fully recorded by pass_a(). Re-running
+         * parse_type_prefix() for real (rather than a hand-rolled
+         * token-count skip, the way struct/union/enum's own type-
+         * prefix gets skipped below) is what correctly handles every
+         * shape the underlying type-prefix can take here, including a
+         * typedef name itself (`typedef MyInt MyInt2;`) - the exact
+         * same ambiguity that motivated cur_is_type() elsewhere, so
+         * reusing the one function that already resolves it correctly
+         * beats duplicating that logic as a second, parallel skip
+         * rule. */
+        if (check(T_TYPEDEF)) {
+            advance(); /* 'typedef' */
+            int t, st, ip; /* discarded - already recorded by pass_a() */
+            parse_type_prefix(&t, &st, &ip);
+            advance(); /* the new type name */
+            expect(T_SEMI, "';'");
+            continue;
+        }
         /* struct definition - already fully processed by pass_a();
          * skip it the same way skip_balanced() skips a function body,
          * rather than falling into the "type [*] name" skip logic
@@ -1035,7 +1134,13 @@ void pass_b(void) {
 
         /* type keyword - already recorded by pass_a, just skip it.
          * `struct Tag`/`union Tag`/`enum Tag` are two tokens where
-         * int/char/void is one. */
+         * int/char/void - and a typedef name, which is always exactly
+         * one token no matter what it's an alias for, even a pointer
+         * type (see TypedefEntry's own comment: a typedef'd pointer
+         * type can never have an extra '*' written after it at a use
+         * site, since that's rejected as pointer-to-pointer back in
+         * pass_a() - so there's never a second token to account for
+         * here either) - are just one. */
         if (check(T_STRUCT) || check(T_UNION) || check(T_ENUM)) { advance(); advance(); } else advance();
         if (check(T_STAR)) advance(); /* optional pointer '*'; already validated in pass A */
         char *name = advance()->text; /* ident */

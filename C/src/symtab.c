@@ -57,6 +57,9 @@ int g_nenumconsts = 0;
 char g_enumtags[64][64];
 int g_nenumtags = 0;
 
+TypedefEntry g_typedefs[256];
+int g_ntypedefs = 0;
+
 GSym *find_global(const char *name) {
     for (int i = 0; i < g_nglobals; i++)
         if (strcmp(g_globals[i].name, name) == 0) return &g_globals[i];
@@ -81,6 +84,11 @@ int find_enum_tag(const char *name) {
     for (int i = 0; i < g_nenumtags; i++)
         if (strcmp(g_enumtags[i], name) == 0) return 1;
     return 0;
+}
+TypedefEntry *find_typedef(const char *name) {
+    for (int i = 0; i < g_ntypedefs; i++)
+        if (strcmp(g_typedefs[i].name, name) == 0) return &g_typedefs[i];
+    return NULL;
 }
 
 /* putchar/puts/peek/poke/printf are handled directly in codegen_expr.c's

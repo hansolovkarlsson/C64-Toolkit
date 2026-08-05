@@ -78,6 +78,24 @@
    and `tests/union.c` for the regression coverage (including
    overlapping-storage checks in both directions - a wide write read
    back narrow, and a narrow write read back wide).
+9. ~~`typedef`~~ — done, the harder of the two remaining candidates
+   (`unsigned` is still open) but tractable: resolves entirely at
+   parse time, inside `parse_type_prefix()` itself, so - like `enum` -
+   it needed zero codegen changes; the real work was parsing, not
+   codegen. A typedef name is a plain identifier, lexically
+   indistinguishable from a variable/function name, so every place
+   this compiler decides "declaration or expression?" had to start
+   checking the current token's TEXT against the registered-typedef
+   table, not just its KIND - `cur_is_type()` (`src/parser.c`) is that
+   combined check, replacing four separate `is_type_kw(cur()->kind)`
+   call sites. A typedef'd pointer type can't gain an extra `*` at a
+   use site (rejected as pointer-to-pointer, which isn't supported at
+   all). Top-level only, same as struct/union/enum; the underlying type
+   must already exist as a plain reference, not an inline anonymous
+   definition combined with the typedef in one statement (this compiler
+   has no anonymous-struct-definition syntax to combine with in the
+   first place). See `README.md`'s "How typedef works" for the full
+   design and `tests/typedef.c` for the regression coverage.
 
 ## Other language ideas, not yet scheduled
 
@@ -115,8 +133,6 @@ where there's something specific worth knowing before starting on one.
 
 ### Type system / declarations
 
-- `typedef` — every `struct`/`union` variable/parameter currently needs
-  the full `struct Tag`/`union Tag` spelled out, no bare `Tag`.
 - Function pointers.
 - Pointer-to-pointer (`int **`).
 - Arrays of pointers.

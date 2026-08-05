@@ -38,6 +38,14 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   meaningfully more invasive (a context-sensitive parsing problem and a
   new type-system dimension threaded through the whole compiler,
   respectively). See `C/README.md`'s "How union works".
+- `cc64` also picked up `typedef` - resolves entirely at parse time
+  (zero codegen changes, the same as `enum`/`union`), but needed a real
+  fix to the parser's own "declaration or expression?" decision logic:
+  a typedef name is a plain identifier, so every place that used to
+  check just the current token's KIND now also checks its TEXT against
+  the registered-typedef table. `unsigned` is the one candidate from
+  that original three-way comparison still open. See `C/README.md`'s
+  "How typedef works".
 
 ## Open cross-project questions
 

@@ -160,6 +160,22 @@ to approach the codebase for the first time:
   for exactly how far that goes and the one real restriction it has
   (an enumerator's own value must be a literal, not another
   enumerator's expression).
+- **`typedef`:** `typedef <existing type> Name;` - `Name` becomes a
+  usable alias for that exact type (`int`, `char *`, `struct Tag`,
+  `union Tag`, `enum Tag`, or even another typedef) absolutely
+  everywhere a type can appear: variables, parameters, return types,
+  struct/union members, array element types, even another `typedef`'s
+  own underlying type. `typedef struct Tag Tag;` (the same tag name for
+  both) is the common "drop the `struct` keyword afterward" idiom and
+  works fine. **The underlying type must already exist as a plain type
+  reference** - `typedef struct { ... } Name;` (an inline anonymous
+  definition combined with the typedef in one statement) isn't
+  supported, since this compiler has no anonymous-struct-definition
+  syntax at all in the first place (unlike `enum`, `struct`/`union`
+  always require a tag); define the tag separately first, then
+  `typedef` it. `typedef` is top-level only, the same restriction
+  `struct`/`union`/`enum` definitions already have - see "How typedef
+  works" below for the full design.
 - **Statements:** `if`/`else`, `while`, `do`/`while`, `for`, `switch`/
   `case`/`default` (integer-constant cases only, real fallthrough,
   `break` exits the switch - see "How switch works" below), `break`,
@@ -213,10 +229,8 @@ Pointer-to-pointer, function pointers, arrays of pointers, array
 receives exactly the same decayed pointer), by-value struct/union
 parameters and return values (use `struct Tag *`/`union Tag *`
 instead), struct/union members that are themselves a struct/union-by-
-value or an array, `typedef`s (so every struct/union variable/
-parameter needs the full `struct Tag`/`union Tag` spelled out - no
-bare `Tag` after a `typedef struct Tag Tag;`), multi-dimensional
-arrays, floating point, and real variadic functions
+value or an array, multi-dimensional arrays, floating point, and real
+variadic functions
 (a user-defined function can't take a `...` parameter the way `printf`
 does - see "How printf works" below for how `printf` itself gets away
 without that machinery existing at all). The preprocessor is limited
@@ -354,6 +368,61 @@ struct holding a union's current value alongside a discriminator field
 telling you which member is meaningful) still works fine in cc64, just
 via a pointer member (`union Tag *data;`) rather than one held by
 value, the same workaround a self-referential struct already needs.
+
+### How typedef works
+
+`typedef <type-prefix> Name;` resolves ENTIRELY at parse time, inside
+`parse_type_prefix()` itself (`src/parser.c`) - the same function every
+other kind of declaration already calls to parse its own type prefix.
+By the time parsing moves past a use of `Name`, it has already been
+substituted for whatever `Name` actually means (`int`, `char *`,
+`struct Tag`, ...); nothing downstream - not the AST, not codegen, not
+even `infer_type()` - ever sees `Name` or knows a typedef was involved
+at all. This is why `typedef` needed no codegen changes whatsoever
+(the same was true of `enum`, for the same underlying reason: a
+compile-time-only substitution, with zero runtime representation).
+
+**The real difficulty was parsing, not codegen.** A typedef name is a
+plain identifier - lexically indistinguishable from a variable or
+function name - so every place this compiler decides "am I looking at
+a declaration or an expression?" now has to check more than just the
+current token's KIND (`int`/`char`/`struct`/... are unambiguous
+keywords) - it has to check the token's actual TEXT against the table
+of registered typedef names too. `cur_is_type()` (`src/parser.c`) is
+that combined check, and replaced every place that used to ask
+`is_type_kw(cur()->kind)` alone: `pass_a()`'s top-level dispatch and
+parameter-type parsing, and `parse_stmt()`'s local-declaration and
+`for`-loop-init detection. (Struct/union member parsing needed no such
+change - a struct/union body is unconditionally a list of member
+declarations already, nothing else, so it can call
+`parse_type_prefix()` directly without first asking "is this a
+declaration.")
+
+**Chaining works** (`typedef MyInt AnotherInt;`) because
+`parse_type_prefix()`'s typedef branch is reached by exactly the same
+path a fresh `int`/`struct Tag`/... reference would be - it doesn't
+matter that `MyInt` itself came from an earlier typedef, only that
+`cur_is_type()`/`find_typedef()` can look it up by name right now.
+
+**A typedef'd pointer type can't gain an extra `*` at a use site**
+(`typedef char *String; ... String *sp;` is rejected as pointer-to-
+pointer, which this compiler doesn't support at all) - the typedef
+branch handles its own trailing-`*` check separately from every other
+branch's shared one, specifically so it can tell "this name was
+already a pointer" apart from "this name is a plain type gaining its
+first pointer star here."
+
+**`typedef` is top-level only**, the same restriction `struct`/`union`/
+`enum` definitions already have - `g_typedefs` (`cc64.h`) is one flat,
+file-wide table with no per-function scoping at all, matching how this
+compiler already handles every other kind of collision (rejecting a
+name reused across categories, rather than implementing real lexical
+scoping where an inner declaration can shadow an outer one). The
+underlying type must also already exist as a plain type reference, not
+an inline anonymous definition combined with the typedef in one
+statement (`typedef struct { ... } Name;`) - see the "What's supported"
+list above for why (this compiler has no anonymous-struct-definition
+syntax at all, `enum`'s own optional tag aside).
 
 ### How enum works
 
@@ -724,12 +793,21 @@ part of the passing suite) cover a union member held by value inside a
 struct, a `struct`/`union` tag used with the wrong keyword (both
 directions), redefining the same tag, a by-value union parameter or
 return value, an array member, a duplicate member name, and member
-access on a non-aggregate value.
+access on a non-aggregate value. `tests/typedef.c` covers a plain
+scalar alias, a pointer alias, `typedef struct/union/enum Tag Tag;`
+(the "drop the keyword afterward" idiom, for all three), a typedef
+built from another typedef, and a typedef used as a global's type
+(with an array size and an initializer), a function's parameter and
+return type, and a struct member's type (through a pointer, respecting
+struct's own by-value-member restriction). Separate error-path checks
+(not part of the passing suite) cover pointer-to-pointer via a
+typedef'd pointer type, redefining a typedef, a typedef colliding with
+a global/function/builtin/enum-constant name, and an array typedef.
 
-Run all eleven:
+Run all twelve:
 
 ```sh
-for f in hello features forward pointers recursion include structs dowhile_switch printf enum union; do
+for f in hello features forward pointers recursion include structs dowhile_switch printf enum union typedef; do
     ./cc64 tests/$f.c -o tests/$f.asm
     ./c64asm tests/$f.asm -o tests/$f.prg --listing tests/$f.lst
     python3 mini6502.py tests/$f.prg tests/$f.lst
@@ -741,5 +819,5 @@ done
 See [`ROADMAP.md`](ROADMAP.md) for other language/tooling ideas not
 yet scheduled and the standard library's own open items - every item
 from the original "next steps" list (`do`/`while`, `switch`, a
-`printf`-lite) is now done, and `enum`/`union` (picked up separately
-from that list) are too.
+`printf`-lite) is now done, and `enum`/`union`/`typedef` (picked up
+separately from that list) are too.

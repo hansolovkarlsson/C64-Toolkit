@@ -145,7 +145,7 @@
 
 typedef enum {
     T_EOF, T_IDENT, T_NUM, T_CHARLIT, T_STRLIT,
-    T_INT, T_CHAR, T_VOID, T_STRUCT, T_UNION, T_ENUM, T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
+    T_INT, T_CHAR, T_VOID, T_STRUCT, T_UNION, T_ENUM, T_TYPEDEF, T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
     T_BREAK, T_CONTINUE, T_DO, T_SWITCH, T_CASE, T_DEFAULT,
     T_LPAREN, T_RPAREN, T_LBRACE, T_RBRACE, T_LBRACKET, T_RBRACKET,
     T_SEMI, T_COMMA, T_DOT, T_ARROW, T_COLON,
@@ -271,6 +271,29 @@ typedef struct {
     long value;
 } EnumConst;
 
+/* One `typedef <type-prefix> Name;` - Name is just an alias for
+ * whatever parse_type_prefix() resolved the underlying type-prefix to
+ * (type/isPointer/structTag), recorded here so a LATER reference to
+ * `Name` as a type resolves to the exact same thing. There's no
+ * runtime trace of a typedef anywhere - by the time parsing is done
+ * substituting it in (parse_type_prefix(), src/parser.c), every Node/
+ * LSym/GSym/FnSym downstream just has the real underlying type, the
+ * same as if the alias had never been used at all. This compiler only
+ * supports `typedef <existing type-prefix> Name;` - the underlying
+ * type must already exist as a plain type reference (`struct Tag`,
+ * `int`, `char *`, ...), not an inline anonymous definition combined
+ * with the typedef in one statement (`typedef struct { ... } Name;`
+ * isn't supported, since this compiler has no anonymous-struct-
+ * definition syntax at all - `struct`, unlike `enum`, always requires
+ * a tag). typedef is also top-level only, the same restriction
+ * struct/union/enum definitions already have. */
+typedef struct {
+    char name[64];
+    int type;
+    int isPointer;
+    int structTag;   /* valid iff type==TY_STRUCT */
+} TypedefEntry;
+
 /* A global variable's declared shape. Globals live at a fixed,
  * compile-time-known address (a label), so - unlike locals - they
  * don't need a "which function owns this" association. */
@@ -327,12 +350,15 @@ extern char g_enumtags[64][64]; /* names of every tagged `enum Tag { ... }` seen
                                     use, unlike g_structs there's no per-tag struct
                                     here, since an enum tag carries no other data */
 extern int g_nenumtags;
+extern TypedefEntry g_typedefs[256];
+extern int g_ntypedefs;
 
 GSym *find_global(const char *name);
 FnSym *find_func(const char *name);
 LSym *find_local(const char *name);
 EnumConst *find_enum_const(const char *name);
 int find_enum_tag(const char *name); /* 1 if this tag was defined via 'enum Tag { ... };', else 0 */
+TypedefEntry *find_typedef(const char *name);
 int is_builtin(const char *name);
 void register_local(const char *name, int type, int isPointer, int structTag,
                      int isArray, int arrLen, int isParam, int line);
