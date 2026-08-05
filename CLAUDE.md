@@ -11,10 +11,10 @@ file still reaches that project's pre-merge history — see
 looks truncated; `git blame` always works):
 
 - **`asm/`** — `c64asm`, a two-pass 6502/6510 assembler for the C64, in
-  three interchangeable, byte-identical-output implementations (Python,
-  single-file C99, and a heavily-commented multi-file C99 split), plus a
-  standard library, a from-scratch 6502 emulator used as the test harness,
-  a disassembler, and ~15 demo games/programs written in its own asm
+  two interchangeable, byte-identical-output implementations (Python,
+  and a heavily-commented multi-file C99 split), plus a standard
+  library, a from-scratch 6502 emulator used as the test harness, a
+  disassembler, and ~15 demo games/programs written in its own asm
   syntax.
 - **`C/`** — `cc64`, a small C-to-6502 compiler that targets `c64asm`'s
   exact syntax as its output. Depends on `asm/` at build/run time (see
@@ -44,12 +44,10 @@ cd asm
 
 # Build the split-source (multi-file) C implementation
 make                       # -> bin/c64asm
-make single                # -> single_src/c64asm (single-file C)
 make clean                 # remove build artifacts
 
-# Assemble one file directly, any of the three implementations:
+# Assemble one file directly, either implementation:
 python3 single_src/c64asm.py input.asm -o output.prg [--listing out.lst] [--lib-dir lib]
-./single_src/c64asm input.asm -o output.prg
 ./bin/c64asm input.asm -o output.prg
 
 # Build every example demo to .prg (also builds bin/c64asm first)
@@ -84,10 +82,13 @@ for the standard library and every demo. A demo's `.prg` must be built
 (`make examples` from `asm/`, or the direct assemble command above)
 before its test can run against it.
 
-**Three-way parity** is a hard invariant for this project: Python,
-single-file C, and split-source C must produce byte-identical `.prg` and
-`--listing` output for the same input. When changing assembler behavior,
-verify a change in all three, not just one.
+**Two-way parity** is a hard invariant for this project: Python and
+split-source C must produce byte-identical `.prg` and `--listing`
+output for the same input. When changing assembler behavior, verify a
+change in both, not just one. (A third, single-file C implementation
+used to exist and made this a three-way check; it was retired as
+redundant with split-source C — see `asm/docs/CHANGELOG.md`'s "Retired
+the single-file C build".)
 
 ### `C/` — the compiler
 
@@ -131,8 +132,8 @@ line. Read `asm/src/assembler.h`'s header comment (or `c64asm-reference.md`
 
 Pipeline, in the order data actually flows through the split-source
 implementation (`asm/src/`, see `ARCHITECTURE.md` for the full guided
-tour) — the same conceptual stages exist in the Python and single-file C
-versions too, just not as separate files:
+tour) — the same conceptual stages exist in the Python version too,
+just not as separate files:
 
 1. **`fileio` / `includes`** — load the top-level file; `.include` resolves
    relative to the *including* file's own directory (not cwd), is

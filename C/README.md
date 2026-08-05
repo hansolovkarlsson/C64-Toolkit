@@ -1,7 +1,7 @@
 # cc64 - a minimal C compiler for the Commodore 64
 
 `cc64` compiles a small subset of C directly to 6502 assembly in the
-exact syntax your `c64asm.c` assembler expects. This is built
+exact syntax the `c64asm` assembler (`../asm/`) expects. This is built
 incrementally: get a solid, verified minimal subset working first (a
 step-1 "int/char, no pointers" core), then add features on top of a
 foundation that's already known to generate correct code. Pointers,
@@ -19,7 +19,7 @@ Portable C99, no dependencies. A Makefile builds `cc64` from `src/*.c`:
 
 ```sh
 make
-cc -std=c99 -O2 -o c64asm c64asm.c   # your existing assembler
+(cd ../asm && make)   # builds ../asm/bin/c64asm, if you don't have it yet
 ```
 
 (`make clean` removes the built binary.) Both build cleanly with
@@ -309,7 +309,7 @@ this platform anyway (as a byte type, not as `signed char`).
 
 The C64 boots into its default character set ("uppercase/graphics"),
 where only the codes in the `$41`-`$5A` range render as letters (and
-only as uppercase) - the `$C1`-`$DA` range your `c64asm.c`'s
+only as uppercase) - the `$C1`-`$DA` range the assembler's own
 `ascii_to_petscii()` uses for uppercase source characters is
 **graphics symbols**, not lowercase letters, in that default mode.
 Those codes only render as letters once the C64 has been switched

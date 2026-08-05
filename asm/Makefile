@@ -20,13 +20,12 @@ SOURCES := $(wildcard $(SRC_DIR)/*.c)
 OBJECTS := $(SOURCES:.c=.o)
 TARGET  := $(BIN_DIR)/c64asm
 
-# Single-file
-SINGLE_DIR := single_src
-SINGLE_TARGET := $(SINGLE_DIR)/c64asm
-SINGLE_SOURCE := $(SINGLE_DIR)/c64asm.c
+# single_src/ also holds c64asm.py (the reference, no-dependency
+# implementation) and c64disasm.py -- no Makefile target needed for
+# either, since Python runs directly from source.
 
 # C64 Programs
-# CASM = [ bin/c64asm single_src/c64asm "python3 single_src/c64asm.py"]
+# CASM = [ bin/c64asm "python3 single_src/c64asm.py"]
 CASM    ?= $(TARGET)
 EXA_DIR := examples
 EXA_SRC := $(wildcard $(EXA_DIR)/*.asm)
@@ -44,24 +43,19 @@ VICE_C1541 = /Applications/vice-arm64-gtk3-3.10/bin/c1541
 
 
 # Make
-all: $(TARGET) $(SINGLE_TARGET)
+all: $(TARGET)
 
 bin: $(TARGET)
-single: $(SINGLE_TARGET)
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $(OBJECTS)
-
-$(SINGLE_TARGET): $(SINGLE_SOURCE)
-	@touch $(SINGLE_SOURCE)
-	$(CC) $(CFLAGS) -o $@ $(SINGLE_SOURCE)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Cleanup
-clean: clean_examples 
-	rm -f $(TARGET) $(SRC_DIR)/*.o $(SINGLE_TARGET)
+clean: clean_examples
+	rm -f $(TARGET) $(SRC_DIR)/*.o
 
 clean_examples:
 	rm -f $(EXA_PRG) $(EXA_DIR)/*.lst $(EXA_DIR)/*.vice $(EXA_DIR)/vice.log ./vice.log

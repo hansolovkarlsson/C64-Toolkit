@@ -29,12 +29,11 @@ stub gets you straight from `LOAD`/`RUN` to your program.
 ## What's here
 
 - **[`asm/`](asm/README.md)** — `c64asm`, a two-pass 6502/6510 assembler,
-  in three interchangeable, byte-identical-output implementations
-  (Python, single-file C99, and a heavily-commented multi-file C99
-  split for reading). Includes a standard library (`lib/`), a
-  from-scratch 6502/C64 emulator used as the test harness
-  (`mini6502.py`), a disassembler (`c64disasm.py`), and around 15 demo
-  programs and games.
+  in two interchangeable, byte-identical-output implementations
+  (Python, and a heavily-commented multi-file C99 split for reading).
+  Includes a standard library (`lib/`), a from-scratch 6502/C64
+  emulator used as the test harness (`mini6502.py`), a disassembler
+  (`c64disasm.py`), and around 15 demo programs and games.
 - **[`C/`](C/README.md)** — `cc64`, a small C compiler that compiles
   directly to `c64asm`-compatible assembly: pointers, structs, full
   recursion (via per-function frame save/restore, since there's no

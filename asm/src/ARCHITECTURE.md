@@ -1,20 +1,25 @@
 # c64asm — multi-file source, with a guide
 
-This is the same c64asm assembler as `c64asm.c` — same syntax, same
-opcode table, same output for any given input — split into one file per
-concern, with substantially more explanatory commentary than the
-original single-file version. It exists for people who want to *read*
-an assembler's source and understand how one is actually built, not
-just use it.
+This is the same c64asm assembler as the Python implementation
+(`../c64asm.py`) — same syntax, same opcode table, same output for any
+given input — split into one file per concern, with substantially more
+explanatory commentary. It exists for people who want to *read* an
+assembler's source and understand how one is actually built, not just
+use it, and is also this project's one C implementation: a single-file
+C99 build once existed alongside it (see `CHANGELOG.md`'s "Retired the
+single-file C build") but was retired as redundant, since it was the
+same language as this split build and wasn't used by anything
+downstream.
 
 **This is not a different assembler.** Every `.asm` file that worked
-with `c64asm.c` produces byte-identical `.prg` and listing output here.
-Every module was cross-checked against the original single-file
-`c64asm.c` (and, separately, against the Python implementation) across
-all six of this project's demo programs — `hello.asm`, `edge.asm`,
-`bounce.asm`, `pong.asm`, `adventure.asm`, and `lander.asm` — plus both
-of the assembler's own error-handling paths (an out-of-range branch, and
-a backward `.org`), with zero differences in output or behavior. Macro
+with the Python implementation produces byte-identical `.prg` and
+listing output here. During this split's own development, every module
+was cross-checked against both the Python implementation and (at the
+time) an original single-file C99 build, across all six of this
+project's demo programs — `hello.asm`, `edge.asm`, `bounce.asm`,
+`pong.asm`, `adventure.asm`, and `lander.asm` — plus both of the
+assembler's own error-handling paths (an out-of-range branch, and a
+backward `.org`), with zero differences in output or behavior. Macro
 support (`macro.h`/`.c`, added after the initial split) was
 cross-checked the same three-way way, against its own set of test
 programs covering parameterized macros, zero-parameter macros, nested

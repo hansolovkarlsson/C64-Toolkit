@@ -5,8 +5,8 @@
 #
 # Chains cc64 (C -> assembly) and c64asm (assembly -> .prg) so you don't
 # have to invoke them separately. Requires both binaries to be built
-# already (`make` builds cc64 from src/*.c; cc -std=c99 -O2 -o c64asm
-# c64asm.c builds the assembler), and expects them to be in the same
+# already (`make` builds cc64 from src/*.c; `(cd ../asm && make)` builds
+# c64asm from ../asm/src/*.c), and expects them to be in the same
 # directory as this script (or on PATH).
 
 set -e

@@ -1,16 +1,16 @@
 # c64asm
 
 A complete two-pass 6502/6510 assembler for the Commodore 64, available
-in two interchangeable implementations — Python and portable C99 (as
-both a single file and a commented, multi-file split for reading) —
-plus a standard library, a from-scratch 6502/C64 emulator used for
-automated testing, five demo programs, and a full set of reference
-documentation.
+in two interchangeable implementations — Python and portable C99 (split
+into one file per concern, heavily commented, for reading — see
+`ARCHITECTURE.md`) — plus a standard library, a from-scratch 6502/C64
+emulator used for automated testing, five demo programs, and a full set
+of reference documentation.
 
-All three assembler builds (Python, single-file C, split-source C)
-accept identical syntax and are verified to produce **byte-identical**
-`.prg` and listing output for the same source file, so you can use
-whichever fits your workflow.
+Both assembler builds (Python and split-source C) accept identical
+syntax and are verified to produce **byte-identical** `.prg` and
+listing output for the same source file, so you can use whichever fits
+your workflow.
 
 ```asm
 ; hello.asm - prints a message and cycles the border color
@@ -142,16 +142,11 @@ a real C64 to run it.
 python3 c64asm.py <input.asm> -o <output.prg> [--listing <file.lst>] [--lib-dir <dir>]
 ```
 
-**C** (portable C99; builds with `clang` on macOS or `gcc`/`clang` on
-Linux, using only the standard library):
-
-```
-cc -O2 -o c64asm c64asm.c
-./c64asm <input.asm> -o <output.prg> [--listing <file.lst>] [--lib-dir <dir>]
-```
-
-**Split-source C**, for reading how an assembler like this is actually
-built (same syntax, same output — see `ARCHITECTURE.md`):
+**C** (portable C99, split into one file per concern — builds with
+`clang` on macOS or `gcc`/`clang` on Linux, using only the standard
+library; also the one to read if you want to see how an assembler like
+this is actually built, same syntax and same output as the Python
+build — see `ARCHITECTURE.md`):
 
 ```
 unzip c64asm-split-src.zip && make
@@ -173,14 +168,14 @@ or an explicit `--entry` you provide) rather than blindly decoding
 byte by byte — branches, jumps, and calls get followed recursively,
 and anything never reached that way is shown as plain `.byte` data
 rather than guessed at as an instruction. This is deliberately a
-single Python tool, not matched across three implementations the way
+single Python tool, not matched across both implementations the way
 `c64asm.py` itself is — see `c64disasm.py`'s own header comment for
 the full reasoning, the algorithm, and its known limitations
 (computed/indirect jumps and jump tables chief among them).
 
 Its own correctness test is disassembling and then reassembling every
 `.prg` this project ships — all of them, including the illegal-opcode
-demo, byte-for-byte identical to the original across all three `c64asm`
+demo, byte-for-byte identical to the original across both `c64asm`
 builds, not just checked for a plausible-looking result.
 
 ## Project structure
@@ -188,9 +183,8 @@ builds, not just checked for a plausible-looking result.
 | File | What it is |
 |---|---|
 | `GETTING-STARTED.md` | **Start here** — a short, example-driven walkthrough from nothing to a running C64 program |
-| `c64asm.py` | The assembler, Python implementation |
-| `c64asm.c` | The assembler, single-file portable C99 implementation |
-| `c64asm-split-src.zip` | The same assembler split into one file per concern, heavily commented, with a `Makefile` — for reading, not a different implementation (see `ARCHITECTURE.md`) |
+| `c64asm.py` | The assembler, Python implementation — the no-dependency reference build |
+| `c64asm-split-src.zip` | The assembler, portable C99, split into one file per concern with a `Makefile`, heavily commented for reading how an assembler like this is actually built (see `ARCHITECTURE.md`) |
 | `c64disasm.py` | **Disassembler** — turns a `.prg` back into `c64asm.py`-compatible source, following actual code flow rather than blind byte-by-byte decoding (see "Disassembler" above) |
 | `ARCHITECTURE.md` | Guide to the split-source project's module layout |
 | `CHANGELOG.md` | **Project history** — every notable feature and fix, newest first, with pointers into the docs below for the full detail on each |
@@ -200,7 +194,7 @@ builds, not just checked for a plausible-looking result.
 | `c64asm-stdlib.zip` | **Standard library** — `.include`-able text/input/graphics/sound/math routines, shared across the demos (see below) |
 | `mini6502.zip` | **mini6502** — a from-scratch 6502/C64 emulator used to test-drive every demo and library routine below (see below) |
 | `hello.asm` / `.prg` / `.lst` | Demo: prints text via `CHROUT` and cycles the border color |
-| `demo.asm` / `.prg` / `.lst` | Demo: exercises every standard library file together (`lib/text.inc`, `lib/input.inc`, `lib/keyboard.inc`, `lib/graphics.inc`, `lib/sound.inc`) in one small program — a visible sprite, W/A/S/D movement with a border stop and a sound on each move, Q to exit; also this project's own integration test, cross-checked across all three implementations and actually executed, not just assembled (see `lib-reference.md`) |
+| `demo.asm` / `.prg` / `.lst` | Demo: exercises every standard library file together (`lib/text.inc`, `lib/input.inc`, `lib/keyboard.inc`, `lib/graphics.inc`, `lib/sound.inc`) in one small program — a visible sprite, W/A/S/D movement with a border stop and a sound on each move, Q to exit; also this project's own integration test, cross-checked across both implementations and actually executed, not just assembled (see `lib-reference.md`) |
 | `sprites.asm` / `.prg` / `.lst` (+ `star_anim.bin`) | Demo: a 4-frame sprite animation loaded from `star_anim.bin`, an external binary asset, via `.incbin` (`c64asm-reference.md` §14) instead of hand-transcribed `.byte` data; same W/A/S/D movement and border stop as `demo.asm`'s own star, plus continuous frame-cycling independent of movement |
 | `music_demo.asm` / `.prg` / `.lst` | Demo: two-voice SID music via `lib/music.inc` — "Twinkle Twinkle Little Star" (public domain) on a sawtooth melody voice, a triangle bass line underneath, border color pulsing on the beat |
 | `editor.asm` / `.prg` / `.lst` | Demo: a text editor with new/save/save-as/delete/load/help and disk directory listing, whose document scrolls well beyond a single screen (~8x one screen's worth, in a separate document buffer the visible 24 rows are only ever a rendered window onto) — direct screen memory writes (with PETSCII-to-screen-code conversion), a reverse-video block cursor, full-screen cursor movement via the KERNAL's own keyboard buffer (`GETIN`), and real KERNAL disk I/O (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/`CHKOUT`/`CLRCHN`/`CLOSE`/`READST`) saving/loading SEQ files (trimming trailing blank lines so a short document doesn't take forever on a real drive), deleting via `SCRATCH`, and parsing a real directory listing's byte format; saving over an existing file works by scratching it first rather than the CBM DOS `@0:name,S,W` replace shortcut, which has a well-documented data-corruption bug on original 1541 firmware; RUN/STOP cancels any filename prompt or confirmation; F4/F5 show a selectable list of what's actually on disk rather than asking for a filename typed blind; F3 remembers and reuses the document's own filename once it has one, F6 always prompts for a name regardless; F8 shows a quick F-key reference on the status line; typing or moving the cursor shows the current row number on the status line, and HOME/CLR page the viewport a full screen at a time (not a cursor-key combination — confirmed directly that none of CTRL/SHIFT/C= produce anything new for cursor keys) |

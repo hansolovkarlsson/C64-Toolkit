@@ -6,12 +6,39 @@ rather than by version — each one names what changed and points at
 where it's documented in full (`c64asm-reference.md`, `README.md`, or
 `lib-reference.md`).
 
-Every entry below shipped identically across all three implementations
-(the Python reference `c64asm.py`, the single-file C `c64asm.c`, and
-the 14-module split-source C in `c64asm-split-src.zip`) and passed
-this project's full regression suite before being marked done — that
-discipline is this project's own standing practice, not something
-worth repeating in every entry below.
+Every entry below shipped identically across both implementations (the
+Python reference `c64asm.py` and the split-source C in
+`c64asm-split-src.zip` — a third, single-file C build also existed and
+was cross-checked the same way, up until it was retired; see "Retired
+the single-file C build" below) and passed this project's full
+regression suite before being marked done — that discipline is this
+project's own standing practice, not something worth repeating in
+every entry below.
+
+## Retired the single-file C build
+
+`single_src/c64asm.c` (and its compiled binary) is gone — it was the
+one implementation that didn't earn a distinct role. Python
+(`c64asm.py`) is the documented no-dependency/reference build; the
+split-source C in `c64asm-split-src.zip` is both the build actually
+used downstream (`C/`'s `cc64` chains to it, not to the single-file
+build) and the one meant for reading how an assembler like this is
+built. The single-file build was just the same language as
+split-source, packaged as one file instead of a `Makefile`-driven
+split, with nothing depending on that packaging specifically.
+
+Two costs, both accepted: every feature now only needs implementing
+twice (Python + split-source C) instead of three times, but the
+three-way cross-check that used to run alongside every change loses
+one leg of redundancy — a real thing in this project's own history
+(see `src/ARCHITECTURE.md`'s intro for two genuine pre-existing bugs
+that exact kind of cross-checking caught). `asm/Makefile`'s `single`
+target, `SINGLE_TARGET`/`SINGLE_SOURCE` variables, and every "three
+implementations"/"three-way" doc reference describing *current*
+project practice (as opposed to describing what a specific past
+feature's own development history actually did, which stays as
+written) were updated accordingly across `README.md`, `CLAUDE.md`,
+`src/ARCHITECTURE.md`, and `lib-reference.md`.
 
 ## `.tag`/`.endtag`: per-field shape checking
 

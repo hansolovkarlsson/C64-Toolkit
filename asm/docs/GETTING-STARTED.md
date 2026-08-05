@@ -18,7 +18,7 @@ see `README.md`.
 
 ## Step 1: get the assembler running
 
-Pick whichever of these fits how you like to work — all three accept
+Pick whichever of these fits how you like to work — both accept
 identical syntax and produce byte-identical output, so it's purely a
 matter of preference.
 
@@ -28,17 +28,9 @@ matter of preference.
 python3 c64asm.py yourfile.asm -o yourfile.prg
 ```
 
-**C**, a single `cc -O2 -o c64asm c64asm.c` away:
-
-```
-cc -O2 -o c64asm c64asm.c
-./c64asm yourfile.asm -o yourfile.prg
-```
-
-**Split-source C**, the same assembler broken into one file per
-concern with a `Makefile` — worth it if you want to read or modify how
-the assembler itself works (see `ARCHITECTURE.md`), not a different
-assembler:
+**C**, broken into one file per concern with a `Makefile` — also worth
+it if you want to read or modify how the assembler itself works (see
+`ARCHITECTURE.md`), not a different assembler:
 
 ```
 unzip c64asm-split-src.zip && make

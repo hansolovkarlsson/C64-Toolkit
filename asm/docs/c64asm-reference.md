@@ -5,7 +5,9 @@ plain-text assembly source file and produces a `.prg` file — a two-byte
 little-endian load address followed by the assembled machine code — in the
 format the C64 KERNAL and every C64 emulator expect.
 
-Two interchangeable implementations exist, `c64asm.py` and `c64asm.c`. They
+Two interchangeable implementations exist: `c64asm.py` (Python, the
+no-dependency reference build) and the split-source C99 build in
+`c64asm-split-src.zip` (`unzip c64asm-split-src.zip && make`). They
 accept identical syntax and are verified to produce byte-identical output
 for the same source file. Use whichever suits your environment.
 
@@ -15,7 +17,7 @@ for the same source file. Use whichever suits your environment.
 
 ```
 python3 c64asm.py <input.asm> -o <output.prg> [--listing <file.lst>] [--vice-labels <file>] [--lib-dir <dir>] [--warn-unused | --warn-unused-all]
-cc -O2 -o c64asm c64asm.c && ./c64asm <input.asm> -o <output.prg> [--listing <file.lst>] [--vice-labels <file>] [--lib-dir <dir>] [--warn-unused | --warn-unused-all]
+./c64asm <input.asm> -o <output.prg> [--listing <file.lst>] [--vice-labels <file>] [--lib-dir <dir>] [--warn-unused | --warn-unused-all]
 ```
 
 | Argument | Required | Description |
