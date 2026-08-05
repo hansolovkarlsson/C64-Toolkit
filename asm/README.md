@@ -295,6 +295,11 @@ model the behavior that had been missed (see `mini6502-reference.md`
 for the API and `c64asm-stdlib.zip`'s `test_demo.py`/`test_adventure.py`
 for worked regression suites built on it).
 
+## Roadmap
+
+See [`ROADMAP.md`](ROADMAP.md) for open work on the assembler itself,
+the standard library, and future demo ideas.
+
 ## Known limitations
 
 - **Zero-page sizing of a *forward-referenced* label** can, in rare

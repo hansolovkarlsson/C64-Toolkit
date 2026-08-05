@@ -486,25 +486,8 @@ for f in hello features forward pointers recursion include structs; do
 done
 ```
 
-## Roadmap (next steps, in a sensible order)
+## Roadmap
 
-1. ~~Pointers and `&`/`*`~~ - done. Unlocked passing arrays to
-   functions, `char*` strings as real runtime values, pointer
-   arithmetic, and was the prerequisite for...
-2. ~~Function recursion~~ - done, via per-function frame save/restore
-   around every call (see "How recursion works" above) rather than a
-   full stack-frame rewrite, so the fixed-address storage model and
-   all its codegen simplicity survived intact.
-3. ~~`#include` and a small standard library~~ - done. Handled
-   entirely in the lexer (see "HOW #include WORKS" in `src/cc64.h`),
-   which meant zero changes to parsing or codegen; `lib/string.h` and
-   `lib/print.h` are ordinary cc64 programs that happen to be headers.
-4. ~~`struct`~~ - done, pointer-only across function boundaries (see
-   "How structs work" above) rather than also supporting by-value
-   passing, which would need real struct-copying machinery at every
-   call boundary for comparatively little added benefit given
-   pointers already cover the common linked-structure use cases.
-5. `do`/`while`, `switch`.
-6. Real `printf`-lite - blocked on variadic function support, which
-   is a real calling-convention feature (not just a library
-   function), unlike the rest of the standard library above.
+See [`ROADMAP.md`](ROADMAP.md) for what's next (`do`/`while`, `switch`,
+a `printf`-lite), other language/tooling ideas not yet scheduled, and
+the standard library's own open items.
