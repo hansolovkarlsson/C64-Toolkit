@@ -57,6 +57,27 @@
    so `enum Tag` used as a type requires that tag to already be fully
    defined. See `README.md`'s "How enum works" for the full design and
    `tests/enum.c` for the regression coverage.
+8. ~~`union`~~ — done, also picked up separately, chosen next ahead of
+   `typedef`/`unsigned` specifically because it reuses almost all of
+   `struct`'s own machinery rather than needing new infrastructure:
+   same `StructDef`/`StructMember` types, same member-type
+   restrictions, same `.`/`->`/`&` access codegen (already generic on
+   "base address plus this member's offset", so it needed zero changes
+   at all), even the same parsing function
+   (`parse_struct_or_union_def()`, `src/parser.c`, one function
+   handling both keywords now instead of two near-duplicate ones). The
+   one real difference is the layout rule: every union member starts
+   at offset 0 instead of packing sequentially, and the union's size is
+   its widest member's width, not their sum. `struct`/`union` tags
+   share one namespace, matching real C - using the wrong keyword for
+   an already-fully-defined tag is a compile-time error. Also inherits
+   struct's own restrictions (pointer-only across function boundaries,
+   no aggregate-by-value member) unchanged, so a "tagged union" pattern
+   needs a pointer member, the same workaround self-referential structs
+   already use. See `README.md`'s "How union works" for the full design
+   and `tests/union.c` for the regression coverage (including
+   overlapping-storage checks in both directions - a wide write read
+   back narrow, and a narrow write read back wide).
 
 ## Other language ideas, not yet scheduled
 
@@ -67,7 +88,6 @@ where there's something specific worth knowing before starting on one.
 
 ### Data types
 
-- `union`
 - `long`/`short` — `int` is currently always exactly 16 bits; there's
   no smaller or larger integer type.
 - `unsigned` — partially closer than it looks: the unsigned *comparison*
@@ -95,19 +115,20 @@ where there's something specific worth knowing before starting on one.
 
 ### Type system / declarations
 
-- `typedef` — every `struct` variable/parameter currently needs the
-  full `struct Tag` spelled out, no bare `Tag`.
+- `typedef` — every `struct`/`union` variable/parameter currently needs
+  the full `struct Tag`/`union Tag` spelled out, no bare `Tag`.
 - Function pointers.
 - Pointer-to-pointer (`int **`).
 - Arrays of pointers.
 - Array *parameters* written with `[]` syntax - `type *name` already
   receives the identical decayed pointer, so this is a syntax gap, not
   a capability one.
-- By-value struct parameters and return values (`struct Tag *` only,
-  today) — would need real struct-copying machinery at every call
-  boundary; see `README.md`'s "How structs work" for why that was
-  skipped so far.
-- Struct members that are themselves a struct-by-value or an array.
+- By-value struct/union parameters and return values (`struct Tag *`/
+  `union Tag *` only, today) — would need real aggregate-copying
+  machinery at every call boundary; see `README.md`'s "How structs
+  work" for why that was skipped so far.
+- Struct/union members that are themselves a struct/union-by-value or
+  an array.
 - Multi-dimensional arrays.
 - Real variadic user functions (a `...` parameter) — `printf`'s own
   compile-time-constant format-string restriction is what let it ship

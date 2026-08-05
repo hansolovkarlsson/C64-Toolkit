@@ -90,7 +90,7 @@ static Token *expect(TokKind k, const char *what) {
     return advance();
 }
 
-static int is_type_kw(TokKind k) { return k == T_INT || k == T_CHAR || k == T_VOID || k == T_STRUCT || k == T_ENUM; }
+static int is_type_kw(TokKind k) { return k == T_INT || k == T_CHAR || k == T_VOID || k == T_STRUCT || k == T_UNION || k == T_ENUM; }
 
 /* Several parsing functions call each other in a cycle that doesn't
  * follow a strict "top to bottom" order (parse_primary() needs
@@ -141,12 +141,36 @@ static int type_from_tok(TokKind k) {
  * genuinely identical everywhere: `int`, `char`, `void`, or
  * `struct Tag`, then an optional `*`. */
 static void parse_type_prefix(int *type, int *structTag, int *isPointer) {
-    if (check(T_STRUCT)) {
+    if (check(T_STRUCT) || check(T_UNION)) {
+        int wantUnion = check(T_UNION);
         advance();
-        if (!check(T_IDENT)) fatal(cur()->line, "expected struct tag name after 'struct'");
-        char *tag = advance()->text;
+        if (!check(T_IDENT))
+            fatal(cur()->line, "expected %s tag name after '%s'",
+                  wantUnion ? "union" : "struct", wantUnion ? "union" : "struct");
+        Token *tagTok = advance();
+        char *tag = tagTok->text;
+        int tagIdx = find_or_create_struct_tag(tag);
+        /* A tag already fully defined as the OTHER kind is always a
+         * real error, not something to defer the way an incomplete
+         * (not-yet-defined) tag is below - struct and union tags share
+         * one namespace (see StructDef's own comment in cc64.h), so
+         * `union Foo` used where `Foo` is already a real struct can
+         * never become valid no matter what comes later in the file. */
+        if (g_structs[tagIdx].defined && g_structs[tagIdx].isUnion != wantUnion)
+            fatal(tagTok->line, "'%s' is a %s, not a %s", tag,
+                  g_structs[tagIdx].isUnion ? "union" : "struct",
+                  wantUnion ? "union" : "struct");
+        /* Not yet defined - tentatively record which keyword THIS
+         * reference used, so an error about this still-incomplete tag
+         * (e.g. a by-value parameter check, which fires regardless of
+         * completeness) says the right word. A real StructDef, freshly
+         * created by find_or_create_struct_tag() above, defaults
+         * isUnion to 0 (memset), which would otherwise make every
+         * as-yet-undefined tag look like a struct even when every
+         * reference to it so far has said `union`. */
+        if (!g_structs[tagIdx].defined) g_structs[tagIdx].isUnion = wantUnion;
         *type = TY_STRUCT;
-        *structTag = find_or_create_struct_tag(tag);
+        *structTag = tagIdx;
     } else if (check(T_ENUM)) {
         /* `enum Tag` used as a type is always just `int` (see
          * EnumConst's own comment in cc64.h) - the tag is required
@@ -181,38 +205,66 @@ static void parse_type_prefix(int *type, int *structTag, int *isPointer) {
     if (*type < 0 && *isPointer) fatal(cur()->line, "'void *' is not supported in this version");
 }
 
-/* `struct Tag { member-decl* };` - parsed and fully resolved (every
- * member's offset, and the struct's total size) entirely here in
- * pass_a, since a struct body is just a list of declarations with no
- * expressions or statements that would need deferring to pass_b. See
- * find_or_create_struct_tag()'s comment in symtab.c for how self- and
- * mutually-referential structs (a member pointing back to its own
- * struct, or to another struct defined later in the file) work. */
-static void parse_struct_def(void) {
-    advance(); /* 'struct' */
+/* `struct Tag { member-decl* };` or `union Tag { member-decl* };` -
+ * parsed and fully resolved (every member's offset, and the whole
+ * aggregate's total size) entirely here in pass_a, since a body is
+ * just a list of declarations with no expressions or statements that
+ * would need deferring to pass_b.
+ *
+ * Shared between both keywords, parameterized by `isUnion`, rather
+ * than two near-identical copies: struct and union differ in exactly
+ * one thing - how a member's OFFSET (and the aggregate's total SIZE)
+ * is computed. A struct member gets the next free byte, accumulating
+ * as usual; a union member always starts at byte 0 (every member
+ * overlaps every other one, C's whole point of a union), and the
+ * aggregate's size is its WIDEST member's width, not their sum.
+ * Everything else - member type restrictions, duplicate-name checking,
+ * how a StructMember/StructDef gets filled in - is identical, and
+ * keeping it as one function is what guarantees a future fix to any of
+ * that shared logic can't accidentally apply to only one of the two.
+ *
+ * struct and union tags share one namespace/table (g_structs) here,
+ * matching real C - you can't have both a `struct Foo` and a
+ * `union Foo`, and this function's own redefinition check enforces
+ * that directly. See find_or_create_struct_tag()'s comment in
+ * symtab.c for how self- and mutually-referential aggregates (a member
+ * pointing back to its own struct/union, or to another one defined
+ * later in the file) work - equally for both keywords, since neither
+ * one cares at reference time which kind the tag will turn out to be,
+ * only once a member needs the target's actual size. */
+static void parse_struct_or_union_def(int isUnion) {
+    const char *kw = isUnion ? "union" : "struct";
+    advance(); /* 'struct' or 'union' */
     char *tagname = advance()->text; /* tag name, already confirmed T_IDENT by the caller */
     int tagIdx = find_or_create_struct_tag(tagname);
     StructDef *sd = &g_structs[tagIdx];
-    if (sd->defined) fatal(cur()->line, "redefinition of struct '%s'", tagname);
+    if (sd->defined) {
+        if (sd->isUnion != isUnion)
+            fatal(cur()->line, "'%s' is already defined as a %s, not a %s",
+                  tagname, sd->isUnion ? "union" : "struct", kw);
+        fatal(cur()->line, "redefinition of %s '%s'", kw, tagname);
+    }
+    sd->isUnion = isUnion;
     advance(); /* '{' */
-    int offset = 0;
+    int offset = 0;    /* struct: next free byte, accumulating */
+    int maxWidth = 0;  /* union: widest member seen so far */
     while (!check(T_RBRACE)) {
         int mtype, mStructTag, mIsPointer;
         parse_type_prefix(&mtype, &mStructTag, &mIsPointer);
-        if (mtype < 0) fatal(cur()->line, "'void' is not a valid struct member type");
+        if (mtype < 0) fatal(cur()->line, "'void' is not a valid member type");
         if (mtype == TY_STRUCT && !mIsPointer)
-            fatal(cur()->line, "struct members must be int, char, or a pointer "
-                                "(a nested struct-by-value member is not supported "
-                                "in this version - use a pointer instead)");
+            fatal(cur()->line, "%s members must be int, char, or a pointer "
+                                "(a nested struct/union-by-value member is not "
+                                "supported in this version - use a pointer instead)", kw);
         if (!check(T_IDENT)) fatal(cur()->line, "expected member name");
         char *mname = advance()->text;
         if (check(T_LBRACKET)) fatal(cur()->line, "array members are not supported in this version");
         expect(T_SEMI, "';'");
         for (int i = 0; i < sd->nmembers; i++)
             if (strcmp(sd->members[i].name, mname) == 0)
-                fatal(cur()->line, "duplicate member '%s' in struct '%s'", mname, tagname);
+                fatal(cur()->line, "duplicate member '%s' in %s '%s'", mname, kw, tagname);
         if (sd->nmembers >= (int)(sizeof(sd->members)/sizeof(sd->members[0])))
-            fatal(cur()->line, "too many members in struct '%s'", tagname);
+            fatal(cur()->line, "too many members in %s '%s'", kw, tagname);
         StructMember *m = &sd->members[sd->nmembers++];
         memset(m, 0, sizeof(*m));
         strncpy(m->name, mname, sizeof(m->name)-1);
@@ -221,12 +273,17 @@ static void parse_struct_def(void) {
             member - safe even if mStructTag is still incomplete (self/mutual
             reference), since var_width() checks isPointer before ever touching
             g_structs[structTag] */
-        m->offset = offset;
-        offset += m->width;
+        if (isUnion) {
+            m->offset = 0;
+            if (m->width > maxWidth) maxWidth = m->width;
+        } else {
+            m->offset = offset;
+            offset += m->width;
+        }
     }
     advance(); /* '}' */
     expect(T_SEMI, "';'");
-    sd->size = offset;
+    sd->size = isUnion ? maxWidth : offset;
     sd->defined = 1;
 }
 
@@ -351,7 +408,13 @@ void pass_a(void) {
          * `struct Tag g;`, both of which DO fall through to the
          * general path below. */
         if (check(T_STRUCT) && peekAt(1)->kind == T_IDENT && peekAt(2)->kind == T_LBRACE) {
-            parse_struct_def();
+            parse_struct_or_union_def(0);
+            continue;
+        }
+        /* Same for `union Tag {` - union's tag is required, same as
+         * struct's, so the detection shape is identical. */
+        if (check(T_UNION) && peekAt(1)->kind == T_IDENT && peekAt(2)->kind == T_LBRACE) {
+            parse_struct_or_union_def(1);
             continue;
         }
         /* Same idea for `enum`, except the tag is optional here, so
@@ -389,10 +452,12 @@ void pass_a(void) {
                 fn->retIsPointer = rIsPointer;
                 fn->retStructTag = rStructTag;
             }
-            if (rtype == TY_STRUCT && !rIsPointer)
-                fatal(cur()->line, "function '%s' returns a struct by value; return "
-                                    "'struct %s *' instead (structs must be passed by "
-                                    "pointer in this version)", name, g_structs[rStructTag].name);
+            if (rtype == TY_STRUCT && !rIsPointer) {
+                const char *kw = g_structs[rStructTag].isUnion ? "union" : "struct";
+                fatal(cur()->line, "function '%s' returns a %s by value; return "
+                                    "'%s %s *' instead (structs/unions must be passed by "
+                                    "pointer in this version)", name, kw, kw, g_structs[rStructTag].name);
+            }
             fn->nparams = 0;
             if (check(T_VOID) && peekAt(1)->kind == T_RPAREN) {
                 advance();
@@ -407,11 +472,13 @@ void pass_a(void) {
                     char *pname = advance()->text;
                     if (check(T_LBRACKET))
                         fatal(cur()->line, "array parameters are not supported; use a pointer instead");
-                    if (ptype == TY_STRUCT && !pIsPointer)
-                        fatal(cur()->line, "parameter '%s' is a struct passed by value; use "
-                                            "'struct %s *%s' instead (structs must be passed "
-                                            "by pointer in this version)", pname,
+                    if (ptype == TY_STRUCT && !pIsPointer) {
+                        const char *kw = g_structs[pStructTag].isUnion ? "union" : "struct";
+                        fatal(cur()->line, "parameter '%s' is a %s passed by value; use "
+                                            "'%s %s *%s' instead (structs/unions must be passed "
+                                            "by pointer in this version)", pname, kw, kw,
                                             g_structs[pStructTag].name, pname);
+                    }
                     if (fn->nparams >= 32) fatal(cur()->line, "too many parameters");
                     fn->paramTypes[fn->nparams] = ptype;
                     fn->paramIsPointer[fn->nparams] = pIsPointer;
@@ -449,7 +516,7 @@ void pass_a(void) {
         if (check(T_ASSIGN)) {
             advance();
             if (g.isPointer) fatal(cur()->line, "pointer initializers are not supported in this version");
-            if (g.type == TY_STRUCT) fatal(cur()->line, "struct initializers are not supported in this version");
+            if (g.type == TY_STRUCT) fatal(cur()->line, "struct/union initializers are not supported in this version");
             g.hasInit = 1;
             g.initVal = parse_const_value(1, "global initializer's value");
         }
@@ -755,7 +822,7 @@ static Node *parse_vardecl(void) {
     if (check(T_ASSIGN)) {
         advance();
         if (n->declArrLen) fatal(n->line, "array initializers are not supported in this version");
-        if (type == TY_STRUCT && !isPointer) fatal(n->line, "struct initializers are not supported in this version");
+        if (type == TY_STRUCT && !isPointer) fatal(n->line, "struct/union initializers are not supported in this version");
         n->a = parse_assign();
     }
     expect(T_SEMI, "';'");
@@ -948,6 +1015,13 @@ void pass_b(void) {
             expect(T_SEMI, "';'");
             continue;
         }
+        /* Same for a union definition - identical shape to struct's. */
+        if (check(T_UNION) && peekAt(1)->kind == T_IDENT && peekAt(2)->kind == T_LBRACE) {
+            advance(); advance(); /* 'union' Tag */
+            skip_balanced(T_LBRACE, T_RBRACE);
+            expect(T_SEMI, "';'");
+            continue;
+        }
         /* Same for an enum definition - both the anonymous and tagged
          * forms, matching pass_a()'s own two-shape detection. */
         if (check(T_ENUM) && (peekAt(1)->kind == T_LBRACE ||
@@ -960,9 +1034,9 @@ void pass_b(void) {
         }
 
         /* type keyword - already recorded by pass_a, just skip it.
-         * `struct Tag`/`enum Tag` are two tokens where int/char/void is
-         * one. */
-        if (check(T_STRUCT) || check(T_ENUM)) { advance(); advance(); } else advance();
+         * `struct Tag`/`union Tag`/`enum Tag` are two tokens where
+         * int/char/void is one. */
+        if (check(T_STRUCT) || check(T_UNION) || check(T_ENUM)) { advance(); advance(); } else advance();
         if (check(T_STAR)) advance(); /* optional pointer '*'; already validated in pass A */
         char *name = advance()->text; /* ident */
 

@@ -145,7 +145,7 @@
 
 typedef enum {
     T_EOF, T_IDENT, T_NUM, T_CHARLIT, T_STRLIT,
-    T_INT, T_CHAR, T_VOID, T_STRUCT, T_ENUM, T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
+    T_INT, T_CHAR, T_VOID, T_STRUCT, T_UNION, T_ENUM, T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN,
     T_BREAK, T_CONTINUE, T_DO, T_SWITCH, T_CASE, T_DEFAULT,
     T_LPAREN, T_RPAREN, T_LBRACE, T_RBRACE, T_LBRACKET, T_RBRACKET,
     T_SEMI, T_COMMA, T_DOT, T_ARROW, T_COLON,
@@ -231,21 +231,29 @@ typedef struct {
     int width;            /* 1 (char) or 2 (int/any pointer) */
 } StructMember;
 
-/* One `struct Tag { ... };` definition. `defined` distinguishes a
- * fully-parsed struct from a mere forward reference (e.g. `struct Tag
- * *next;` inside the struct's own body, or a mutual reference between
- * two different structs, before its own `{ members }` has been seen) -
- * see find_or_create_struct_tag()'s comment in symtab.c. Members are
- * deliberately restricted to char/int/pointer - no nested struct-by-
- * value member and no array member - which keeps offset/size
- * computation trivial (no padding/alignment concerns either: this is
- * a byte-addressed 8-bit machine, so members are packed with no gaps). */
+/* One `struct Tag { ... };` OR `union Tag { ... };` definition - both
+ * keywords share this one type and one table (g_structs), matching
+ * real C's shared struct/union/enum tag namespace; `isUnion`
+ * distinguishes which this particular tag actually is. `defined`
+ * distinguishes a fully-parsed aggregate from a mere forward reference
+ * (e.g. `struct Tag *next;` inside the struct's own body, or a mutual
+ * reference between two different structs, before its own
+ * `{ members }` has been seen) - see find_or_create_struct_tag()'s
+ * comment in symtab.c. Members are deliberately restricted to
+ * char/int/pointer - no nested struct/union-by-value member and no
+ * array member - which keeps offset/size computation trivial (no
+ * padding/alignment concerns either: this is a byte-addressed 8-bit
+ * machine, so struct members are packed with no gaps; union members
+ * all start at offset 0 regardless, see parse_struct_or_union_def() in
+ * parser.c). */
 typedef struct {
     char name[64];
     StructMember members[32];
     int nmembers;
-    int size;      /* total bytes; sum of every member's width */
+    int size;      /* total bytes: sum of every member's width (struct),
+                       or the single widest member's width (union) */
     int defined;
+    int isUnion;   /* 0 = struct, 1 = union */
 } StructDef;
 
 /* One `enum` constant - just a name and its integer value. Unlike

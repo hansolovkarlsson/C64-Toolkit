@@ -90,8 +90,8 @@ to approach the codebase for the first time:
 
 - **Types:** `int` (16-bit, signed), `char` (8-bit, **unsigned** - see
   below), `void`, single-level pointers to any of those (`int *`,
-  `char *`, `struct Tag *`), `struct`, and `enum` (always just `int` -
-  see "How enum works" below).
+  `char *`, `struct Tag *`), `struct`, `union`, and `enum` (always just
+  `int` - see "How enum works" below).
 - **Declarations:** globals and locals, with an optional 1-D array
   form (`int a[10];`, `char buf[40];`, `struct Point pts[10];`), and
   an optional constant literal initializer for scalar (non-pointer,
@@ -143,6 +143,13 @@ to approach the codebase for the first time:
   deliberate scope boundaries for this step, not oversights, and both
   give a clear compile-time error rather than silently doing the
   wrong thing.
+- **`union`:** `union Tag { int/char/pointer members; };` - same
+  syntax, same member restrictions, and the exact same `.`/`->`/`&`
+  access and pointer-only-across-function-boundaries rules as `struct`
+  (they share essentially all of the same machinery - see "How union
+  works" below), except every member starts at byte offset 0 instead
+  of packing sequentially, and the union's own size is its widest
+  member's width, not their sum.
 - **`enum`:** `enum [Tag] { NAME [= value], ... };`, with a tag
   optional (unlike `struct`'s own required one) and C's usual auto-
   increment (each enumerator defaults to one more than the last, zero
@@ -203,12 +210,13 @@ to approach the codebase for the first time:
 
 Pointer-to-pointer, function pointers, arrays of pointers, array
 *parameters* written with `[]` syntax (use `type *name` instead - it
-receives exactly the same decayed pointer), by-value struct parameters
-and return values (use `struct Tag *` instead), struct members that
-are themselves a struct-by-value or an array, `union`, `typedef`s
-(so every struct variable/parameter needs the full `struct Tag`
-spelled out - no bare `Tag` after a `typedef struct Tag Tag;`),
-multi-dimensional arrays, floating point, and real variadic functions
+receives exactly the same decayed pointer), by-value struct/union
+parameters and return values (use `struct Tag *`/`union Tag *`
+instead), struct/union members that are themselves a struct/union-by-
+value or an array, `typedef`s (so every struct/union variable/
+parameter needs the full `struct Tag`/`union Tag` spelled out - no
+bare `Tag` after a `typedef struct Tag Tag;`), multi-dimensional
+arrays, floating point, and real variadic functions
 (a user-defined function can't take a `...` parameter the way `printf`
 does - see "How printf works" below for how `printf` itself gets away
 without that machinery existing at all). The preprocessor is limited
@@ -306,6 +314,46 @@ the whole struct at every call boundary, which is genuine additional
 machinery for a pattern (linked lists, trees, anything built with
 `->`) that pointer-passing already covers naturally - shipping that
 first, cleanly, seemed better than shipping both halfway.
+
+### How union works
+
+`union Tag { ... }` reuses essentially all of `struct`'s own machinery
+- the same `StructDef`/`StructMember` types (`cc64.h`), the same
+`parse_struct_or_union_def()` (`src/parser.c`, one function handling
+both keywords, parameterized by which one this definition actually
+used), the same member-type restrictions, and the exact same `.`/`->`/
+`&` member-access codegen, completely unchanged, because that codegen
+was already generic on "read from base address plus this member's
+offset" and never had any reason to care whether that offset came from
+a struct's or a union's own layout rule. **The one real difference is
+how a member's offset (and the whole aggregate's size) is computed**:
+a struct member gets the next free byte, accumulating as it goes; a
+union member always starts at offset 0 - every member overlaps every
+other one, which is the entire point of a union - and the aggregate's
+total size is its single WIDEST member's width, not their sum.
+
+`struct` and `union` tags **share one namespace**, matching real C: you
+can't have both a `struct Foo` and a `union Foo` in the same program,
+and using the wrong keyword for an already-fully-defined tag
+(`union Foo` where `Foo` is a real `struct`) is a compile-time error
+immediately, in `parse_type_prefix()`. A tag that's only been forward-
+referenced so far (e.g. `union Foo *p;` before `Foo`'s own
+`{ members }` has been seen anywhere) is more lenient, the same way an
+incomplete struct tag already is - this compiler doesn't chase down
+every possible inconsistency between an early forward reference's own
+keyword and the tag's eventual real definition, since a pointer's
+generated code (always just 2 bytes) can't actually go wrong from that
+mislabeling either way; only a real, completed definition's keyword is
+ever treated as authoritative.
+
+**Unions are pointer-only across function boundaries and can't be a
+struct/union member by value**, for the identical reasons (and via the
+identical checks) `struct` already has both restrictions - see
+"Structs are pointer-only..." just above. A "tagged union" pattern (a
+struct holding a union's current value alongside a discriminator field
+telling you which member is meaningful) still works fine in cc64, just
+via a pointer member (`union Tag *data;`) rather than one held by
+value, the same workaround a self-referential struct already needs.
 
 ### How enum works
 
@@ -664,12 +712,24 @@ already-be-defined check specifically, alongside separate error-path
 checks (not part of the passing suite) for a misspelled/undefined tag,
 a duplicate tag, a duplicate enumerator, an enumerator colliding with
 a global or builtin name, and trying to assign to or take the address
-of an enum constant.
+of an enum constant. `tests/union.c` covers overlapping storage
+(writing one member and reading a *different* one back, confirmed both
+ways - a wide write then a narrow read, and a narrow write that only
+touches part of a wider member, leaving the rest alone), a pointer
+member, a union accessed through a pointer parameter (`union Tag *`),
+and a struct holding a union via a pointer member (the "tagged union"
+pattern, worked around the same way a self-referential struct already
+has to be - see "How union works"). Separate error-path checks (not
+part of the passing suite) cover a union member held by value inside a
+struct, a `struct`/`union` tag used with the wrong keyword (both
+directions), redefining the same tag, a by-value union parameter or
+return value, an array member, a duplicate member name, and member
+access on a non-aggregate value.
 
-Run all ten:
+Run all eleven:
 
 ```sh
-for f in hello features forward pointers recursion include structs dowhile_switch printf enum; do
+for f in hello features forward pointers recursion include structs dowhile_switch printf enum union; do
     ./cc64 tests/$f.c -o tests/$f.asm
     ./c64asm tests/$f.asm -o tests/$f.prg --listing tests/$f.lst
     python3 mini6502.py tests/$f.prg tests/$f.lst
@@ -681,5 +741,5 @@ done
 See [`ROADMAP.md`](ROADMAP.md) for other language/tooling ideas not
 yet scheduled and the standard library's own open items - every item
 from the original "next steps" list (`do`/`while`, `switch`, a
-`printf`-lite) is now done, and `enum` (picked up separately from that
-list) is too.
+`printf`-lite) is now done, and `enum`/`union` (picked up separately
+from that list) are too.

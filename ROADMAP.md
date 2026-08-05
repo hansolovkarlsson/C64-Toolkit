@@ -30,6 +30,14 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   representation, usable anywhere a plain `int` constant already was
   (expressions, `switch` cases, array sizes, global initializers). See
   `C/README.md`'s "How enum works".
+- `cc64` also picked up `union`, chosen next specifically because it
+  reused almost all of `struct`'s own machinery (same types, same
+  member-access codegen, even the same parsing function now shared
+  between both keywords) rather than needing new infrastructure -
+  `typedef` and `unsigned`, the other two candidates, are both
+  meaningfully more invasive (a context-sensitive parsing problem and a
+  new type-system dimension threaded through the whole compiler,
+  respectively). See `C/README.md`'s "How union works".
 
 ## Open cross-project questions
 

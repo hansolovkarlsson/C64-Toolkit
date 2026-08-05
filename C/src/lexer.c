@@ -150,7 +150,7 @@ static void do_include(const char *fname, int angled, const char *base_dir, int 
  * T_IDENT that the parser will look up in a symbol table later. */
 static struct { const char *kw; TokKind k; } keywords[] = {
     {"int", T_INT}, {"char", T_CHAR}, {"void", T_VOID}, {"struct", T_STRUCT},
-    {"enum", T_ENUM}, {"if", T_IF}, {"else", T_ELSE}, {"while", T_WHILE}, {"for", T_FOR},
+    {"union", T_UNION}, {"enum", T_ENUM}, {"if", T_IF}, {"else", T_ELSE}, {"while", T_WHILE}, {"for", T_FOR},
     {"do", T_DO}, {"switch", T_SWITCH}, {"case", T_CASE}, {"default", T_DEFAULT},
     {"return", T_RETURN}, {"break", T_BREAK}, {"continue", T_CONTINUE},
     {NULL, T_EOF}

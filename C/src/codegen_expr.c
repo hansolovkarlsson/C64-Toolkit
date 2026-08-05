@@ -178,7 +178,7 @@ static void resolve_lvalue_base(Node *n, LVInfo *lv) {
          * pointer, or on a bare array (which decays to a pointer) -
          * both real usage mistakes worth a clear error. */
         CType baseType = infer_type(n->a);
-        if (baseType.base != TY_STRUCT) fatal(n->line, "'.'/'->' used on a value that isn't a struct");
+        if (baseType.base != TY_STRUCT) fatal(n->line, "'.'/'->' used on a value that isn't a struct or union");
         if (baseType.isPointer) fatal(n->line, "'.' used on a pointer or array; use '->' for a "
                                                 "pointer, or index into the array first");
         require_complete_struct(baseType.structTag, n->line);
@@ -724,7 +724,7 @@ void gen_expr_to_R(Node *n) {
             CType t = (l ? (CType){ l->type, l->isPointer, l->structTag }
                          : (CType){ g->type, g->isPointer, g->structTag });
             if (t.base == TY_STRUCT && !t.isPointer)
-                fatal(n->line, "cannot use a struct by value here; use & to take its address");
+                fatal(n->line, "cannot use a struct or union by value here; use & to take its address");
             LVInfo lv; resolve_lvalue_base(n, &lv); gen_lv_load_to_R(&lv);
             return;
         }
@@ -740,7 +740,7 @@ void gen_expr_to_R(Node *n) {
         case N_INDEX: {
             CType t = infer_type(n);
             if (t.base == TY_STRUCT && !t.isPointer)
-                fatal(n->line, "cannot use a struct by value here; use & to take its address");
+                fatal(n->line, "cannot use a struct or union by value here; use & to take its address");
             LVInfo lv; resolve_lvalue_base(n, &lv); gen_lv_load_to_R(&lv);
             return;
         }
@@ -802,7 +802,7 @@ void gen_expr_to_R(Node *n) {
         case N_DEREF: {
             CType t = infer_type(n);
             if (t.base == TY_STRUCT && !t.isPointer)
-                fatal(n->line, "cannot use a struct by value here; use & to take its address");
+                fatal(n->line, "cannot use a struct or union by value here; use & to take its address");
             LVInfo lv; resolve_lvalue_base(n, &lv); gen_lv_load_to_R(&lv);
             return;
         }

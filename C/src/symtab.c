@@ -135,7 +135,7 @@ int find_or_create_struct_tag(const char *name) {
     for (int i = 0; i < g_nstructs; i++)
         if (strcmp(g_structs[i].name, name) == 0) return i;
     if (g_nstructs >= (int)(sizeof(g_structs)/sizeof(g_structs[0])))
-        fatal(0, "too many struct types");
+        fatal(0, "too many struct/union types");
     StructDef *sd = &g_structs[g_nstructs++];
     memset(sd, 0, sizeof(*sd));
     strncpy(sd->name, name, sizeof(sd->name)-1);
@@ -146,18 +146,20 @@ StructMember *find_struct_member(int structTag, const char *name, int line) {
     StructDef *sd = &g_structs[structTag];
     for (int i = 0; i < sd->nmembers; i++)
         if (strcmp(sd->members[i].name, name) == 0) return &sd->members[i];
-    fatal(line, "struct '%s' has no member '%s'", sd->name, name);
+    fatal(line, "%s '%s' has no member '%s'", sd->isUnion ? "union" : "struct", sd->name, name);
     return NULL; /* unreachable */
 }
 
-/* Used anywhere a struct's SIZE is about to matter (a by-value
+/* Used anywhere a struct/union's SIZE is about to matter (a by-value
  * variable/array, sizeof-style offset math, ...) rather than just its
  * existence as a pointer target. */
 void require_complete_struct(int structTag, int line) {
-    if (!g_structs[structTag].defined)
-        fatal(line, "struct '%s' is used here but never fully defined "
-                     "(only pointers to an incomplete struct are allowed)",
-                     g_structs[structTag].name);
+    StructDef *sd = &g_structs[structTag];
+    if (!sd->defined)
+        fatal(line, "%s '%s' is used here but never fully defined "
+                     "(only pointers to an incomplete %s are allowed)",
+                     sd->isUnion ? "union" : "struct", sd->name,
+                     sd->isUnion ? "union" : "struct");
 }
 
 /* ===================================================================
@@ -231,7 +233,7 @@ CType infer_type(Node *n) {
         }
         case N_MEMBER: {
             CType base = infer_type(n->a);
-            if (base.base != TY_STRUCT) fatal(n->line, "'.'/'->' used on a non-struct value");
+            if (base.base != TY_STRUCT) fatal(n->line, "'.'/'->' used on a value that isn't a struct or union");
             if (base.isPointer) fatal(n->line, "internal: N_MEMBER's base should already be dereferenced");
             require_complete_struct(base.structTag, n->line);
             StructMember *m = find_struct_member(base.structTag, n->name, n->line);
