@@ -9,13 +9,14 @@ PKG_CFLAGS := $(shell pkg-config --cflags gtk4)
 PKG_LIBS := $(shell pkg-config --libs gtk4)
 
 BIN := bin/c64emu
-SOURCES := gtk/main.c src/cpu.c src/memory.c
+SOURCES := gtk/main.c src/cpu.c src/memory.c src/cia.c src/machine.c
+HEADERS := src/cpu.h src/memory.h src/cia.h src/machine.h
 
 .PHONY: all clean
 
 all: $(BIN)
 
-$(BIN): $(SOURCES) src/cpu.h src/memory.h
+$(BIN): $(SOURCES) $(HEADERS)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(PKG_CFLAGS) -o $(BIN) $(SOURCES) $(PKG_LIBS)
 

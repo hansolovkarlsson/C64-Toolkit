@@ -21,12 +21,14 @@ newer and was scaffolded directly in this repo (no subtree history).
   exact syntax as its output. Depends on `asm/` at build/run time (see
   below).
 - **`emu/`** — `c64emu`, a from-scratch, general-purpose C64 emulator
-  (cycle-stepped 6502/6510 CPU, memory/bank-switching, a minimal GTK4
-  shell, eventually CIA/VIC-II/SID). Does not share code with `asm/`'s
+  (cycle-stepped 6502/6510 CPU, memory/bank-switching, both CIAs
+  including real keyboard/joystick wiring, a minimal GTK4 shell,
+  eventually VIC-II/SID). Does not share code with `asm/`'s
   `mini6502.py` test harness — see "`c64emu` (`emu/`)" below for why
-  they're deliberately separate. Early-stage: no real graphics,
-  keyboard input, or sound yet — the GTK shell drives the CPU and
-  shows raw screen-RAM bytes, not real VIC-II output.
+  they're deliberately separate. Early-stage: no real graphics or
+  sound yet — the GTK shell drives the machine and shows raw
+  screen-RAM bytes, not real VIC-II output, though keyboard input is
+  now real (it reaches CIA1's keyboard matrix).
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
@@ -157,10 +159,17 @@ make run-all    # builds + runs both test_cpu and test_interrupts
 # bank-switching mode table
 cd emu/tests/memory
 make run
+
+# CIA chip (timers, ports, ICR) and its C64-specific keyboard/
+# joystick/IRQ-NMI wiring: hand-written checks against the published
+# 6526 register semantics and the standard C64 keyboard matrix
+cd emu/tests/cia && make run
+cd emu/tests/machine && make run
 ```
 
-Both gates must pass before building on top of either module — see
-`emu/tests/cpu/README.md` and `emu/tests/memory/README.md` for what
+All four gates must pass before building on top of the module(s) they
+cover — see `emu/tests/cpu/README.md`, `emu/tests/memory/README.md`,
+`emu/tests/cia/README.md`, and `emu/tests/machine/README.md` for what
 "pass" looks like and how to re-derive the CPU suite's success address
 if a future revision of it moves.
 
@@ -271,8 +280,8 @@ something that looks like a limitation:
 A real, general-purpose C64 emulator meant to run actual games/demos
 with a GUI — a different goal from `mini6502.py` below, and the two
 share no code. Staged build order (see `emu/ROADMAP.md`): CPU core ->
-memory/bank-switching -> minimal GTK4 shell (all three done) -> CIA
-1/2 -> VIC-II -> SID. PAL timing only; cartridge and 1541 disk-drive
+memory/bank-switching -> minimal GTK4 shell -> CIA 1/2 (all four done)
+-> VIC-II -> SID. PAL timing only; cartridge and 1541 disk-drive
 emulation are explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
@@ -306,21 +315,70 @@ emulation are explicitly out of scope for now.
   `$FF`, writes are dropped).
 - **ROM images** (`roms/`) are not checked in — Commodore's copyrighted
   binaries. See `emu/roms/README.md`.
-- **GTK4 shell** (`gtk/main.c`): drives the CPU via a `g_timeout_add`
-  loop at ~50 Hz (PAL frame rate; `CYCLES_PER_FRAME` cycles of
-  `cpu_step()` per tick, not cycle-exact — there's no raster to
-  synchronize against until VIC-II exists). Renders screen RAM
-  (`$0400`-`$07E7`) as a raw 40x25 grid of grayscale cells, one byte
-  value per cell — deliberately not real VIC-II text-mode decoding,
-  just proof that the core can be driven and displayed from a real GUI
-  event loop. Runs fine with 0/3 ROMs loaded (the CPU just executes a
-  harmless BRK loop on zeroed memory). Keyboard events are captured
-  via `GtkEventControllerKey` and logged to stdout only — not wired to
-  the C64 keyboard matrix, since CIA (which owns that) doesn't exist
-  yet. Built with `-std=c11`, not this toolkit's usual `-std=c99` —
-  GTK4's own headers rely on C11 typedef-redefinition tolerance
-  (`G_DECLARE_*_TYPE` macros); `src/cpu.c`/`src/memory.c` stay plain
-  C99-compatible regardless of which standard compiles them.
+- **CIA chip** (`src/cia.c`/`src/cia.h`): a chip-generic MOS 6526
+  model, no C64-specific wiring assumptions. PRA/PRB read semantics
+  are per-bit: an output-configured (DDR=1) bit reads back its output
+  latch, an input-configured (DDR=0) bit reads `porta_in`/`portb_in` —
+  external pin state the *caller* must set before reading (see
+  `machine.c` below; that's the seam that lets one chip-generic model
+  serve both CIA1's keyboard/joystick wiring and CIA2's, which has
+  none of that). Timer A/B are 16-bit down-counters with continuous
+  and one-shot modes, and Timer B can cascade off Timer A's underflows
+  (its INMODE). ICR: writing with bit7 set/clear sets/clears mask bits
+  0-4; reading returns which sources are pending (regardless of mask)
+  OR'd with bit7 iff `pending & mask != 0`, and always clears all
+  pending bits — which is also what de-asserts `cia_irq_line()`, real
+  6526 behavior, not optional. TOD clock and the serial data register
+  are passive storage only (no real ticking/shifting) — a documented
+  simplification, not needed for anything on the current roadmap.
+  Verified against hand-derived expectations from the published 6526
+  register semantics (`tests/cia/`) — there's no third-party CIA test
+  suite the way the CPU core has Klaus Dormann's.
+- **Machine wiring** (`src/machine.c`/`src/machine.h`, new — replaces
+  the ad hoc CPU+Memory wiring `gtk/main.c` used to do inline): ties
+  CPU + Memory + CIA1 + CIA2 together. Registers one `IoBus` with
+  `Memory` that dispatches `$DC00`-`$DCFF` to CIA1 and `$DD00`-`$DDFF`
+  to CIA2 (everything else in `$D000`-`$DFFF` still falls through to
+  the inert placeholder, since VIC-II/SID/color RAM don't exist yet).
+  Implements the actual C64-specific keyboard-matrix/joystick wiring
+  on top of the generic CIA1: `update_keyboard_pins()` computes a
+  pin-pulldown model in both directions (PRA driving columns pulls
+  down PRB's rows wherever a held key matches, and vice versa, since
+  real software occasionally scans in either direction) — joystick 2
+  shares PRA's pins 0-4 with keyboard column-select, joystick 1 shares
+  PRB's, a real and well-known hardware quirk (see
+  `asm/docs/c64-memory-reference.md` §6). `machine_step()` calls
+  `cpu_step()` once, ticks both CIAs by exactly that many cycles (NOT
+  batched per video frame — that would make timers grossly imprecise
+  and could miss interrupts), then propagates CIA1's interrupt output
+  into `cpu.irq_line` (level-triggered, direct assignment since it's
+  currently the only IRQ source) and CIA2's into `cpu_nmi()`
+  (edge-triggered — CIA2's IRQ output is wired to the CPU's /NMI pin
+  on real hardware, not /IRQ, so `machine.c` tracks the previous state
+  itself and only calls `cpu_nmi()` on a 0->1 transition). Verified
+  against hand-derived expectations for keyboard scanning (both
+  directions), joystick/keyboard pin-sharing, and IRQ/NMI propagation
+  (`tests/machine/`).
+- **GTK4 shell** (`gtk/main.c`): drives the whole `Machine` via a
+  `g_timeout_add` loop at ~50 Hz (PAL frame rate; `CYCLES_PER_FRAME`
+  worth of `machine_step()` calls per tick, not cycle-exact — there's
+  no raster to synchronize against until VIC-II exists). Renders
+  screen RAM (`$0400`-`$07E7`) as a raw 40x25 grid of grayscale cells,
+  one byte value per cell — deliberately not real VIC-II text-mode
+  decoding, just proof that the core can be driven and displayed from
+  a real GUI event loop. Runs fine with 0/3 ROMs loaded (the CPU just
+  executes a harmless BRK loop on zeroed memory). Keyboard events are
+  now real: GDK key events are translated through `c64_keymap[]` (GDK
+  keyval -> C64 keyboard-matrix PA/PB position, standard published
+  matrix — not exhaustive, see the table's own comment for what's
+  missing) into `machine_set_key()` calls, so typing in the window
+  reaches BASIC/KERNAL once real ROM images are present. Joystick
+  input isn't wired into the GTK shell yet even though
+  `machine_set_joystick()` exists. Built with `-std=c11`, not this
+  toolkit's usual `-std=c99` — GTK4's own headers rely on C11
+  typedef-redefinition tolerance (`G_DECLARE_*_TYPE` macros);
+  `src/*.c` itself stays plain C99-compatible regardless of which
+  standard compiles it.
 
 ### Cross-project test harness: `mini6502.py`
 

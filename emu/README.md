@@ -5,17 +5,24 @@ core, memory/bank-switching, CIA/VIC-II/SID chip emulation, and a
 GTK4 front end — built the same way `asm/` and `C/` were, without
 leaning on an existing emulator core.
 
-**Status:** steps 1-3 of the build order are done - a full legal
+**Status:** steps 1-4 of the build order are done - a full legal
 6502/6510 instruction set (`src/cpu.c`, verified against Klaus
 Dormann's 6502 functional test suite plus a hand-written interrupt/
 reset check), the C64's memory map/bank switching (`src/memory.c`,
-verified against the full mode table with no cartridge present), and a
-minimal GTK4 shell (`gtk/main.c`) that drives the CPU through a real
-window/event loop and displays screen RAM as a raw grayscale grid (not
-real VIC-II output - that doesn't exist yet). See `tests/cpu/README.md`,
-`tests/memory/README.md`, and this file's "Building" section below.
-No CIA/VIC-II/SID yet (so no real keyboard input, no real graphics, no
-sound). See [`ROADMAP.md`](ROADMAP.md) for what's next.
+verified against the full mode table with no cartridge present), a
+minimal GTK4 shell (`gtk/main.c`) that drives the machine through a
+real window/event loop and displays screen RAM as a raw grayscale grid
+(not real VIC-II output - that doesn't exist yet), and both CIAs
+(`src/cia.c` for the chip, `src/machine.c` for the C64-specific
+keyboard-matrix/joystick/IRQ-NMI wiring on top of it). Real keyboard
+input now reaches the machine: typing in the GTK window feeds CIA1's
+keyboard matrix, so BASIC/KERNAL will see it once real ROM images are
+present. See `tests/cpu/README.md`, `tests/memory/README.md`,
+`tests/cia/README.md`, `tests/machine/README.md`, and this file's
+"Building" section below. No VIC-II/SID yet (so no real graphics, no
+sound, and no joystick wiring in the GTK shell yet even though
+`machine_set_joystick()` exists). See [`ROADMAP.md`](ROADMAP.md) for
+what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
 
@@ -75,9 +82,11 @@ independent of the GTK build:
 ```sh
 cd tests/cpu && make fetch && make run-all   # CPU core
 cd tests/memory && make run                  # memory map / bank switching
+cd tests/cia && make run                     # CIA chip (timers, ports, ICR)
+cd tests/machine && make run                 # CIA <-> C64 wiring (keyboard, joystick, IRQ/NMI)
 ```
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (CIA 1/2).
+See [`ROADMAP.md`](ROADMAP.md) for what's next (VIC-II, first pass).
 
 ## ROM images
 

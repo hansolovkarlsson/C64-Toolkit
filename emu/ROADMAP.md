@@ -60,9 +60,29 @@ each piece will live.
    press/release events are captured via `GtkEventControllerKey` and
    logged to stdout, not wired to anything yet - there's no keyboard
    matrix to feed until CIA (step 4) exists.
-4. **CIA 1/2** - timers, keyboard matrix scanning, joystick, TOD clock.
-   Needed before VIC-II mainly because BASIC/KERNAL boot-up already
-   depends on CIA timer behavior.
+4. ~~**CIA 1/2**~~ - done: a chip-generic 6526 model (`src/cia.c`/
+   `src/cia.h` - PRA/PRB with real per-bit DDR output-latch-vs-
+   external-pin read semantics, 16-bit Timer A/B with continuous/
+   one-shot modes and Timer B able to cascade off Timer A's underflows,
+   the ICR mask/pending/read-clears interrupt path) plus the
+   C64-specific wiring on top of it (`src/machine.c`/`src/machine.h` -
+   new, ties CPU+Memory+CIA1+CIA2 together, replacing the ad hoc
+   wiring `gtk/main.c` used to do inline): CIA1's keyboard-matrix/
+   joystick-2-sharing-PRA/joystick-1-sharing-PRB pin-pulldown model,
+   CIA1's interrupt output reaching `cpu.irq_line`, and CIA2's
+   reaching `cpu_nmi()` (edge-triggered, matching real wiring - CIA2's
+   IRQ output goes to the CPU's /NMI pin, not /IRQ). `gtk/main.c`'s
+   keyboard capture (step 3) is now actually wired to something: GDK
+   key events map to C64 keyboard-matrix positions and feed
+   `machine_set_key()`, so typing in the window reaches BASIC/KERNAL
+   once real ROM images are present. TOD clock and the serial data
+   register are both modeled as passive storage only (no real
+   ticking/shifting) - documented as a known simplification in
+   `cia.h`, revisit only if something concrete needs either. See
+   `tests/cia/README.md` and `tests/machine/README.md` for the
+   regression coverage (there's no third-party CIA test suite the way
+   step 1 has Klaus Dormann's, so all of it is hand-derived from the
+   published 6526 register semantics).
 5. **VIC-II, first pass** - text mode and a solid border color first;
    bitmap modes, sprites, and raster interrupts after that. "Bad
    lines" (the cycle-stealing DMA quirk a lot of real software's
