@@ -115,16 +115,34 @@ each piece will live.
    DMA quirk a lot of real software's timing depends on) remains its
    own explicitly-tracked follow-up, not assumed to fall out of a
    future pass for free.
-6. **VIC-II, second pass** - everything step 5 explicitly deferred:
-   raster IRQs (real `$D011`/`$D012` write-sets-compare-target
-   semantics, `$D019`/`$D01A` wired into `cpu.irq_line` the same way
-   CIA1 already is), "bad lines" (the cycle-stealing DMA quirk),
-   multicolor and extended-background-color text modes, bitmap modes,
-   sprites, and light pen. Also where real border geometry (currently
-   a fixed, plausible-looking approximation - see `vic.h`) and
-   scanline-by-scanline rendering (instead of one whole frame per
-   `vic_render_frame()` call) would need to land, if either turns out
-   to matter for real software being tested against.
+6. **VIC-II, second pass** - in progress. Everything step 5 explicitly
+   deferred:
+   - ~~Raster IRQs~~ - done: `$D011`/`$D012` are real shared registers
+     now (reading returns the live raster position, same as before;
+     writing sets `raster_compare` instead - not a bug, real hardware
+     reuses the same two addresses for both). `$D019`'s bits 0-3 are a
+     real write-1-to-clear pending byte, bit 7 a read-only summary of
+     `pending & $D01A`; `vic_irq_line()` feeds `cpu.irq_line` alongside
+     CIA1's (real hardware wired-OR - see `machine_step()`). Caught two
+     real bugs via the new tests before this was even committed:
+     `machine_init()` wasn't zeroing `Machine`'s embedded `Cpu6502` at
+     all (nothing was - `cpu_reset()` only ever touched
+     sp/p/pc/nmi_pending), so `cpu.irq_line` started as uninitialized
+     stack garbage until the first `machine_step()` call happened to
+     overwrite it; and `vic_read()`'s `$D019` bit 7 summary was
+     documented but never actually implemented. Both fixed. Still not
+     modeled: bad lines and real per-instruction raster-effect timing
+     (rendering is still once-per-frame, not scanline-by-scanline, so
+     an IRQ handler that pokes `$D020`/`$D021` mid-frame for a raster
+     bar won't show up in the picture yet even though the IRQ itself
+     now fires at the right line).
+   - "Bad lines" (the cycle-stealing DMA quirk), multicolor and
+     extended-background-color text modes, bitmap modes, sprites, and
+     light pen - not started. Also where real border geometry
+     (currently a fixed, plausible-looking approximation - see
+     `vic.h`) and scanline-by-scanline rendering (instead of one whole
+     frame per `vic_render_frame()` call) would need to land, if either
+     turns out to matter for real software being tested against.
 7. **SID** - the 3-voice synth (square/triangle/sawtooth/noise
    generators, ADSR envelopes) without exact analog filter modeling
    at first; revisit filter accuracy later if it matters for a

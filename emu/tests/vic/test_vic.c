@@ -16,7 +16,7 @@ static int failures = 0;
     if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); failures++; } \
 } while (0)
 
-enum { REG_D011 = 0x11, REG_D018 = 0x18, REG_D020 = 0x20, REG_D021 = 0x21 };
+enum { REG_D011 = 0x11, REG_D012 = 0x12, REG_D018 = 0x18, REG_D019 = 0x19, REG_D01A = 0x1A, REG_D020 = 0x20, REG_D021 = 0x21 };
 
 static void test_raster_counter(void) {
     Vic vic;
@@ -35,6 +35,34 @@ static void test_raster_counter(void) {
     vic_tick(&vic, (PAL_LINES_PER_FRAME - 256) * PAL_CYCLES_PER_LINE); /* wrap back to line 0 */
     CHECK(vic_read(&vic, 0x12) == 0, "raster: should wrap back to line 0 after a full PAL frame");
     CHECK((vic_read(&vic, REG_D011) & 0x80) == 0, "raster: $D011 bit7 should be clear again after wrapping");
+}
+
+static void test_raster_irq(void) {
+    Vic vic;
+    vic_init(&vic);
+
+    vic_write(&vic, REG_D011, 0x00); /* compare MSB = 0 */
+    vic_write(&vic, REG_D012, 5);    /* compare = line 5 */
+    CHECK(vic_read(&vic, 0x12) == 0, "raster IRQ: writing $D012 must NOT change what reading it returns (still the live line, not the compare value)");
+
+    CHECK(vic_irq_line(&vic) == 0, "raster IRQ: line should be clear before the compare line is even reached");
+    for (int line = 0; line < 5; line++) vic_tick(&vic, PAL_CYCLES_PER_LINE);
+    CHECK(vic_irq_line(&vic) == 0, "raster IRQ: still masked (enable=0) even though the compare line was just reached - pending, not asserted");
+    CHECK((vic_read(&vic, REG_D019) & 0x01) != 0, "raster IRQ: $D019 bit0 should be pending regardless of the mask");
+    CHECK((vic_read(&vic, REG_D019) & 0x80) == 0, "raster IRQ: $D019 bit7 should be clear while masked - it reflects pending&enable, not pending alone");
+
+    vic_write(&vic, REG_D01A, 0x01); /* unmask the raster source */
+    CHECK(vic_irq_line(&vic) != 0, "raster IRQ: line should assert now that the already-pending source is unmasked");
+    CHECK((vic_read(&vic, REG_D019) & 0x80) != 0, "raster IRQ: $D019 bit7 should now be set");
+
+    vic_write(&vic, REG_D019, 0x01); /* write-1-to-clear */
+    CHECK(vic_irq_line(&vic) == 0, "raster IRQ: writing 1 to $D019 bit0 should clear pending and de-assert the line");
+
+    for (int line = 0; line < PAL_LINES_PER_FRAME - 5; line++) vic_tick(&vic, PAL_CYCLES_PER_LINE);
+    CHECK(vic_irq_line(&vic) == 0, "raster IRQ: should stay clear for the rest of the frame until line 5 comes around again");
+    vic_tick(&vic, PAL_CYCLES_PER_LINE); /* wraps past line 311 back to line 0, then up to line 5 over the next 5 calls below */
+    for (int line = 0; line < 4; line++) vic_tick(&vic, PAL_CYCLES_PER_LINE);
+    CHECK(vic_irq_line(&vic) != 0, "raster IRQ: should fire again once line 5 comes around on the next frame");
 }
 
 static void test_den_blanks_to_border(void) {
@@ -120,6 +148,7 @@ static void test_color_ram_nibble_masking(void) {
 
 int main(void) {
     test_raster_counter();
+    test_raster_irq();
     test_den_blanks_to_border();
     test_text_rendering_from_ram();
     test_char_rom_visibility_quirk();

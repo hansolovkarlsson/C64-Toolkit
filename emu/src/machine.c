@@ -79,6 +79,14 @@ static void io_write(void *ctx, uint16_t addr, uint8_t v) {
 }
 
 void machine_init(Machine *m) {
+    /* Covers m->cpu, which nothing else here zeroes explicitly -
+     * cpu_reset() (called separately, after this) only sets
+     * sp/p/pc/nmi_pending, leaving a/x/y/cycles/irq_line as whatever
+     * this memory happened to hold otherwise. The sub-inits below are
+     * redundant with this for mem/cia1/cia2/vic (each already zeroes
+     * itself) but kept for clarity and so they still work correctly if
+     * this line is ever removed. */
+    memset(m, 0, sizeof(*m));
     memory_init(&m->mem);
     cia_init(&m->cia1);
     cia_init(&m->cia2);
@@ -113,10 +121,10 @@ int machine_step(Machine *m) {
     cia_tick(&m->cia2, cycles);
     vic_tick(&m->vic, cycles);
 
-    /* CIA1 -> /IRQ (level-triggered): only one source exists so far,
-     * so this can just assign rather than OR in a bit - revisit once
-     * VIC-II raster interrupts are another possible source. */
-    m->cpu.irq_line = cia_irq_line(&m->cia1);
+    /* CIA1 and VIC-II raster IRQs share the CPU's /IRQ line on real
+     * hardware (wired-OR) - level-triggered, so this can just be
+     * recomputed fresh every step rather than tracked incrementally. */
+    m->cpu.irq_line = cia_irq_line(&m->cia1) || vic_irq_line(&m->vic);
 
     /* CIA2 -> /NMI (edge-triggered, per cpu_nmi()'s own contract). */
     int nmi_now = cia_irq_line(&m->cia2);

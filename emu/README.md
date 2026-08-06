@@ -5,31 +5,33 @@ core, memory/bank-switching, CIA/VIC-II/SID chip emulation, and a
 GTK4 front end — built the same way `asm/` and `C/` were, without
 leaning on an existing emulator core.
 
-**Status:** steps 1-5 of the build order are done - a full legal
-6502/6510 instruction set (`src/cpu.c`, verified against Klaus
-Dormann's 6502 functional test suite plus a hand-written interrupt/
-reset check), the C64's memory map/bank switching (`src/memory.c`,
-verified against the full mode table with no cartridge present), a
-GTK4 shell (`gtk/main.c`), both CIAs (`src/cia.c` for the chip,
-`src/machine.c` for the C64-specific keyboard-matrix/joystick/IRQ-NMI
-wiring on top of it - real keyboard input reaches the machine, typing
-in the window feeds CIA1's keyboard matrix), and a first-pass VIC-II
-(`src/vic.c` - real 40x25 hi-res text mode through screen RAM/
-character ROM/color RAM and whichever bank CIA2 selects, plus a solid
-border/background color). **This is now enough to actually boot**:
-`tests/boot/` is an automated end-to-end gate that fetches a real
-open-source ROM replacement (the MEGA65 `open-roms` project) and
-checks that the whole machine runs it unmodified all the way to a
-readable BASIC `READY.` prompt - the one test that exercises the CPU,
-memory map, both CIAs, and VIC-II together, not just each module in
-isolation. See `tests/cpu/README.md`, `tests/memory/README.md`,
-`tests/cia/README.md`, `tests/machine/README.md`, `tests/vic/README.md`,
-`tests/boot/README.md`, and this file's "Building" section below. No SID yet (no sound); no
-raster IRQs, multicolor/bitmap modes, or sprites yet either (see
-`vic.h`'s header comment for the full list of what first-pass VIC-II
-deliberately left out); no joystick wiring in the GTK shell yet even
-though `machine_set_joystick()` exists. See [`ROADMAP.md`](ROADMAP.md)
-for what's next.
+**Status:** steps 1-5 are done and step 6 (VIC-II second pass) is in
+progress - a full legal 6502/6510 instruction set (`src/cpu.c`,
+verified against Klaus Dormann's 6502 functional test suite plus a
+hand-written interrupt/reset check), the C64's memory map/bank
+switching (`src/memory.c`, verified against the full mode table with
+no cartridge present), a GTK4 shell (`gtk/main.c`), both CIAs
+(`src/cia.c` for the chip, `src/machine.c` for the C64-specific
+keyboard-matrix/joystick/IRQ-NMI wiring on top of it - real keyboard
+input reaches the machine, typing in the window feeds CIA1's keyboard
+matrix), and VIC-II (`src/vic.c` - real 40x25 hi-res text mode through
+screen RAM/character ROM/color RAM and whichever bank CIA2 selects, a
+solid border/background color, and now real raster IRQs too - CIA1 and
+VIC-II share the CPU's /IRQ line, matching real hardware). **This is
+enough to actually boot**: `tests/boot/` is an automated end-to-end
+gate that fetches a real open-source ROM replacement (the MEGA65
+`open-roms` project) and checks that the whole machine runs it
+unmodified all the way to a readable BASIC `READY.` prompt - the one
+test that exercises the CPU, memory map, both CIAs, and VIC-II
+together, not just each module in isolation. See `tests/cpu/README.md`,
+`tests/memory/README.md`, `tests/cia/README.md`, `tests/machine/README.md`,
+`tests/vic/README.md`, `tests/boot/README.md`, and this file's
+"Building" section below. No SID yet (no sound); no bad lines,
+multicolor/extended-background-color text modes, bitmap modes,
+sprites, or light pen yet either (see `vic.h`'s header comment for the
+full list of what's still deferred); no joystick wiring in the GTK
+shell yet even though `machine_set_joystick()` exists. See
+[`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
 
@@ -79,8 +81,8 @@ make clean
 The window drives the machine at ~50 Hz (PAL frame rate) and shows
 real VIC-II text-mode output - see `vic.h`'s header comment for
 exactly what's modeled (40x25 hi-res text, border/background color,
-DEN blanking) versus deliberately deferred (raster IRQs, multicolor/
-bitmap modes, sprites). It runs fine with no ROMs loaded (the CPU just
+DEN blanking, raster IRQs) versus deliberately deferred (bad lines,
+multicolor/bitmap modes, sprites). It runs fine with no ROMs loaded (the CPU just
 executes a harmless BRK loop on zeroed memory, and the screen stays
 whatever color `$D021`/`$D020` default to), which is enough to see the
 window/event loop working before real ROMs are available - but with

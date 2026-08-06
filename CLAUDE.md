@@ -22,13 +22,13 @@ newer and was scaffolded directly in this repo (no subtree history).
   below).
 - **`emu/`** — `c64emu`, a from-scratch, general-purpose C64 emulator
   (cycle-stepped 6502/6510 CPU, memory/bank-switching, both CIAs
-  including real keyboard/joystick wiring, a first-pass VIC-II
-  [40x25 text mode, border/background color], a GTK4 shell, eventually
+  including real keyboard/joystick wiring, VIC-II [40x25 text mode,
+  border/background color, raster IRQs], a GTK4 shell, eventually
   SID). Does not share code with `asm/`'s `mini6502.py` test harness —
   see "`c64emu` (`emu/`)" below for why they're deliberately separate.
   **Boots real system software**: tested against the MEGA65
   `open-roms` open-source ROM replacement, it runs unmodified to a
-  readable BASIC `READY.` prompt. Still no sound, no raster IRQs, no
+  readable BASIC `READY.` prompt. Still no sound, no bad lines, no
   multicolor/bitmap modes, no sprites.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
@@ -297,9 +297,9 @@ memory/bank-switching -> GTK4 shell -> CIA 1/2 -> VIC-II first pass
 (all five done, and as of VIC-II this is now enough to actually boot —
 tested against the MEGA65 `open-roms` open-source ROM replacement, it
 runs unmodified to a readable BASIC `READY.` prompt) -> VIC-II second
-pass (raster IRQs, bad lines, multicolor/bitmap modes, sprites) -> SID.
-PAL timing only; cartridge and 1541 disk-drive emulation are
-explicitly out of scope for now.
+pass (raster IRQs done; bad lines, multicolor/bitmap modes, sprites
+not started) -> SID. PAL timing only; cartridge and 1541 disk-drive
+emulation are explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
   instruction set, addressing modes, and per-instruction cycle counts
@@ -352,7 +352,7 @@ explicitly out of scope for now.
   Verified against hand-derived expectations from the published 6526
   register semantics (`tests/cia/`) — there's no third-party CIA test
   suite the way the CPU core has Klaus Dormann's.
-- **VIC-II, first pass** (`src/vic.c`/`src/vic.h`): a free-running
+- **VIC-II** (`src/vic.c`/`src/vic.h`, steps 5-6): a free-running
   raster line counter (63 cycles/line, 312 lines/frame, PAL —
   `vic_tick()`, called from `machine_step()` the same way
   `cia_tick()` is, so `$D011`/`$D012` reflect a real, continuously
@@ -371,15 +371,32 @@ explicitly out of scope for now.
   offset `$1000`/`$1800`, since the ROM chip's select line is
   physically wired to just those two banks' decoding). Color RAM
   (`$D800`-`$DBFF`, a real physically separate 4-bit-wide chip, low
-  nibble meaningful) lives in `Vic` since only rendering ever reads
-  it. Deliberately deferred to a later pass: raster IRQs (`$D011`/
-  `$D012` writes don't set a compare target yet, `$D019`/`$D01A` are
-  passive storage only), bad lines, multicolor/bitmap modes, sprites,
-  light pen — rendering happens once per whole frame, not scanline by
-  scanline, so none of that is possible yet regardless. Verified
-  against hand-derived expectations (`tests/vic/`) and, together with
-  the CPU/memory/CIA modules it depends on, against real system
-  software actually booting (`tests/boot/` — see below).
+  nibble meaningful) lives in `Vic` since only rendering ever reads it.
+  **Raster IRQs** (step 6): `$D011`/`$D012` are real shared registers —
+  reading still returns the live raster position, but writing sets
+  `raster_compare` instead (real hardware reuses the same two
+  addresses for both, not a bug). `$D019` bits 0-3 are a real
+  write-1-to-clear pending byte (`vic_write()` special-cases this —
+  it's not a plain assignment), bit 7 a read-only summary of
+  `pending & $D01A`; `vic_irq_line()` feeds `cpu.irq_line` alongside
+  `cia_irq_line(&cia1)` (real hardware wired-OR, see `machine_step()`).
+  Writing the new tests for this caught two real, pre-existing bugs:
+  `machine_init()` wasn't zeroing `Machine`'s embedded `Cpu6502` at
+  all — `cpu_reset()` only ever touched sp/p/pc/nmi_pending — so
+  `cpu.irq_line` started as uninitialized stack garbage until the
+  first `machine_step()` call happened to overwrite it (now fixed with
+  a `memset(m, 0, sizeof(*m))` at the top of `machine_init()`); and
+  `vic_read()`'s `$D019` bit 7 summary was documented in a comment but
+  never actually implemented (fell through to plain passive storage).
+  Deliberately still deferred: bad lines, multicolor/extended-
+  background-color text modes, bitmap modes, sprites, light pen —
+  rendering still happens once per whole frame, not scanline by
+  scanline, so a raster IRQ handler that pokes `$D020`/`$D021`
+  mid-frame for a split-screen effect won't show up in the picture yet
+  even though the IRQ itself now fires at the right line. Verified
+  against hand-derived expectations (`tests/vic/`, `tests/machine/`)
+  and, together with the CPU/memory/CIA modules it depends on, against
+  real system software actually booting (`tests/boot/` — see below).
 - **Machine wiring** (`src/machine.c`/`src/machine.h` — replaces the ad
   hoc CPU+Memory wiring `gtk/main.c` used to do inline): ties CPU +
   Memory + CIA1 + CIA2 + VIC-II together. Registers one `IoBus` with

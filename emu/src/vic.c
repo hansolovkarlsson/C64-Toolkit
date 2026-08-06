@@ -1,21 +1,23 @@
 /*
- * vic.c - see vic.h's header comment for scope (first-pass text mode
- * only) and what's deliberately deferred.
+ * vic.c - see vic.h's header comment for scope (text mode + raster
+ * IRQs) and what's deliberately deferred.
  */
 
 #include "vic.h"
 #include <string.h>
 
 enum {
-    REG_D011 = 0x11, /* control register 1: bit7=raster MSB (read)/compare MSB (write, not yet acted on), bit4=DEN, bit3=RSEL (not modeled), bits0-2=YSCROLL (not modeled) */
-    REG_D012 = 0x12, /* raster (read: live low 8 bits; write: compare low 8 bits, not yet acted on) */
+    REG_D011 = 0x11, /* control register 1: bit7=raster MSB (read)/compare MSB (write), bit4=DEN, bit3=RSEL (not modeled), bits0-2=YSCROLL (not modeled) */
+    REG_D012 = 0x12, /* raster (read: live low 8 bits; write: compare low 8 bits) */
     REG_D016 = 0x16, /* control register 2: MCM/CSEL/XSCROLL - stored only, not modeled */
     REG_D018 = 0x18, /* memory pointers: bits4-7=screen pointer (1K units), bits1-3=char/bitmap pointer (2K units) */
-    REG_D019 = 0x19, /* IRQ status - stored only, no IRQ wiring yet */
-    REG_D01A = 0x1A, /* IRQ enable - stored only */
+    REG_D019 = 0x19, /* IRQ status: bits0-3 pending (bit0=raster, bits1-3=sprite collisions/light pen - never set, not modeled), bit7=read-only summary. Write CLEARS whichever of bits0-3 are 1 in the value written - see vic_write(). */
+    REG_D01A = 0x1A, /* IRQ enable: bits0-3, plain read/write */
     REG_D020 = 0x20, /* border color (low nibble) */
     REG_D021 = 0x21, /* background color 0 (low nibble) */
 };
+
+#define VIC_IRQ_RASTER 0x01
 
 /* A commonly used approximation of the VIC-II's real analog NTSC/PAL
  * output (this is "Pepto's palette", widely reused across emulators),
@@ -43,11 +45,35 @@ uint8_t vic_read(Vic *vic, uint8_t reg) {
         uint32_t line = vic->raster_cycle / PAL_CYCLES_PER_LINE;
         return (uint8_t)(line & 0xFF);
     }
+    if (reg == REG_D019) {
+        uint8_t pending = vic->regs[REG_D019] & 0x0F;
+        uint8_t enable = vic->regs[REG_D01A] & 0x0F;
+        return (uint8_t)(pending | ((pending & enable) ? 0x80 : 0));
+    }
     return vic->regs[reg];
 }
 
 void vic_write(Vic *vic, uint8_t reg, uint8_t v) {
-    vic->regs[reg & 0x3F] = v;
+    reg &= 0x3F;
+    if (reg == REG_D011) {
+        vic->raster_compare = (uint16_t)((vic->raster_compare & 0x00FF) | ((v & 0x80) ? 0x100 : 0));
+        vic->regs[REG_D011] = v; /* other bits (DEN/RSEL/YSCROLL) are plain storage, only bit7 is dual-purpose */
+        return;
+    }
+    if (reg == REG_D012) {
+        vic->raster_compare = (uint16_t)((vic->raster_compare & 0x0100) | v);
+        vic->regs[REG_D012] = v; /* not read back as such - vic_read() always returns the live raster line here - kept only for consistency/debugging */
+        return;
+    }
+    if (reg == REG_D019) {
+        vic->regs[REG_D019] &= (uint8_t)~(v & 0x0F); /* write-1-to-clear, real 6567/6569 behavior - not a plain assignment */
+        return;
+    }
+    vic->regs[reg] = v;
+}
+
+int vic_irq_line(const Vic *vic) {
+    return (vic->regs[REG_D019] & vic->regs[REG_D01A] & 0x0F) != 0;
 }
 
 uint8_t vic_color_ram_read(Vic *vic, uint16_t addr) {
@@ -59,7 +85,18 @@ void vic_color_ram_write(Vic *vic, uint16_t addr, uint8_t v) {
 }
 
 void vic_tick(Vic *vic, int cycles) {
+    /* `cycles` is always one CPU instruction's worth here (2-7, see
+     * machine_step()) - always less than a full line (63), so at most
+     * one line boundary is ever crossed per call. That's what makes
+     * this simple old/new comparison correct without needing to walk
+     * every line individually. */
+    uint32_t old_line = vic->raster_cycle / PAL_CYCLES_PER_LINE;
     vic->raster_cycle = (uint32_t)((vic->raster_cycle + (uint32_t)cycles) % (PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME));
+    uint32_t new_line = vic->raster_cycle / PAL_CYCLES_PER_LINE;
+
+    if (new_line != old_line && new_line == vic->raster_compare) {
+        vic->regs[REG_D019] |= VIC_IRQ_RASTER;
+    }
 }
 
 static void fill_rect(uint32_t *pixels, int stride, int x0, int y0, int w, int h, uint32_t color) {

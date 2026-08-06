@@ -4,29 +4,27 @@
 #include <stdint.h>
 #include "memory.h"
 
-/* VIC-II, first pass (../ROADMAP.md step 5): a free-running raster
- * line counter, standard 40x25 hi-res text mode, and a solid border/
- * background color. Deliberately NOT implemented yet, each explicitly
- * left for a later pass per the roadmap: raster compare/IRQs (reads
- * of $D011/$D012 already reflect the live raster position - real
- * software can poll it right now - but writes to them don't yet set
- * up a compare target, and $D019/$D01A are passive storage only, no
- * IRQ wiring into the CPU), multicolor/extended-background-color text
- * modes, bitmap modes, sprites, and light pen. "Bad lines" (the
+/* VIC-II (../ROADMAP.md steps 5-6): a free-running raster line
+ * counter, standard 40x25 hi-res text mode, a solid border/background
+ * color, and raster IRQs. Deliberately NOT implemented yet, each
+ * explicitly left for a later pass per the roadmap: "bad lines" (the
  * cycle-stealing DMA quirk a lot of real software's timing depends
- * on) isn't modeled either - rendering happens once per whole frame,
- * not scanline-by-scanline, so there's no notion of mid-frame raster
- * effects at all yet.
+ * on) - rendering happens once per whole frame, not scanline-by-
+ * scanline, so there's no notion of mid-frame raster effects at all
+ * yet, even though raster IRQs themselves now fire at the right line
+ * - plus multicolor/extended-background-color text modes, bitmap
+ * modes, sprites, and light pen.
  *
  * PAL timing: 63 cycles/line, 312 lines/frame (see PAL_CYCLES_PER_LINE/
  * PAL_LINES_PER_FRAME) - matches gtk/main.c's own PAL frame-cycle
  * budget.
  */
 typedef struct {
-    uint8_t regs[64];        /* $D000-$D03F, mirrored across all of $D000-$D3FF - see vic.c for which of these have real behavior vs. passive storage */
+    uint8_t regs[64];        /* $D000-$D03F, mirrored across all of $D000-$D3FF - see vic.c for which of these have real behavior vs. passive storage. $D019 (bits0-3 only) IS the live IRQ-pending byte, $D01A (bits0-3 only) IS the live IRQ-enable byte - see vic_write()'s special-case for $D019's write-1-to-clear semantics. */
     uint8_t color_ram[1024]; /* $D800-$DBFF when I/O is banked in - a real, physically separate 4-bit-wide static RAM chip, always present regardless of VIC bank (unlike screen/char memory, which follow the VIC bank). Low nibble meaningful - see vic_color_ram_read(). */
 
-    uint32_t raster_cycle; /* 0..(PAL_CYCLES_PER_LINE*PAL_LINES_PER_FRAME - 1), advanced by vic_tick() */
+    uint32_t raster_cycle;  /* 0..(PAL_CYCLES_PER_LINE*PAL_LINES_PER_FRAME - 1), advanced by vic_tick() */
+    uint16_t raster_compare; /* 0-311: the raster line $D011 bit7 + $D012 last had written to them - vic_tick() sets $D019 bit0 pending the instant the live raster line reaches this value */
 } Vic;
 
 #define PAL_CYCLES_PER_LINE 63
@@ -46,12 +44,29 @@ void vic_init(Vic *vic);
 
 /* addr must already be reduced to a register number (addr & 0x3F) -
  * machine.c owns deciding which physical address range maps here.
- * Reading $D011/$D012 returns the LIVE raster position (MSB/low byte
- * respectively), not whatever was last written to them - see this
- * file's header comment on why writes to those two don't do anything
- * yet. Every other register just reads back what was last written. */
+ *
+ * $D011/$D012 are real VIC-II shared registers: READING them returns
+ * the LIVE raster position (MSB/low byte respectively); WRITING them
+ * sets `raster_compare` instead (same bit split) - real hardware reuses
+ * the same two register addresses for both purposes, it isn't a bug or
+ * an approximation. $D019 (bits 0-3 pending, bit7 read-only summary)
+ * and $D01A (bits 0-3 enable) are real too - see vic_irq_line().
+ * Writing to $D019 CLEARS whichever of bits 0-3 are 1 in the value
+ * written (matching real hardware's write-1-to-clear semantics), it
+ * does not assign the byte directly.
+ *
+ * Every other register just reads back what was last written. */
 uint8_t vic_read(Vic *vic, uint8_t reg);
 void vic_write(Vic *vic, uint8_t reg, uint8_t v);
+
+/* True exactly when this chip is currently requesting an interrupt:
+ * $D019 & $D01A & 0x0F (bits 0-3) != 0. Unlike CIA's ICR, reading
+ * $D019 does NOT clear pending bits - only an explicit write-1 to
+ * $D019 does - so, also unlike cia_irq_line(), this can safely be
+ * called every machine_step() without side effects. Wired to the
+ * CPU's /IRQ line, the same (shared, wired-OR) line CIA1 uses - see
+ * machine_step(). */
+int vic_irq_line(const Vic *vic);
 
 /* addr must already be reduced to 0-1023. SIMPLIFICATION: the real
  * chip is 4 bits wide - only the low nibble is meaningful storage: a

@@ -94,6 +94,24 @@ static void test_cia1_irq_reaches_cpu(void) {
     CHECK(m.cpu.irq_line != 0, "CIA1 IRQ: cpu.irq_line should go high once timer A underflows with its interrupt unmasked");
 }
 
+static void test_vic_raster_irq_reaches_cpu(void) {
+    Machine m;
+    machine_init(&m);
+    machine_reset(&m);
+
+    memory_write(&m.mem, 0xD011, 0x00); /* raster compare MSB = 0 */
+    memory_write(&m.mem, 0xD012, 1);    /* raster compare = line 1 */
+    memory_write(&m.mem, 0xD01A, 0x01); /* unmask the raster IRQ source */
+
+    CHECK(m.cpu.irq_line == 0, "VIC-II raster IRQ: line should be clear before the compare line is reached");
+    int total_cycles = 0;
+    while (total_cycles < 200) { /* comfortably more than one line (63 cycles) */
+        total_cycles += machine_step(&m);
+        if (m.cpu.irq_line) break;
+    }
+    CHECK(m.cpu.irq_line != 0, "VIC-II raster IRQ: cpu.irq_line should go high once the raster reaches the compare line with the source unmasked");
+}
+
 static void test_cia2_nmi_reaches_cpu(void) {
     Machine m;
     machine_init(&m);
@@ -118,6 +136,7 @@ int main(void) {
     test_keyboard_scan_reverse_direction();
     test_joystick2_shares_pra();
     test_cia1_irq_reaches_cpu();
+    test_vic_raster_irq_reaches_cpu();
     test_cia2_nmi_reaches_cpu();
 
     if (failures == 0) {
