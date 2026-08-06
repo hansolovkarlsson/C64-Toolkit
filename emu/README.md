@@ -5,14 +5,17 @@ core, memory/bank-switching, CIA/VIC-II/SID chip emulation, and a
 GTK4 front end — built the same way `asm/` and `C/` were, without
 leaning on an existing emulator core.
 
-**Status:** steps 1-2 of the build order are done - a full legal
+**Status:** steps 1-3 of the build order are done - a full legal
 6502/6510 instruction set (`src/cpu.c`, verified against Klaus
 Dormann's 6502 functional test suite plus a hand-written interrupt/
-reset check) and the C64's memory map/bank switching (`src/memory.c`,
-verified against the full mode table with no cartridge present). See
-`tests/cpu/README.md` and `tests/memory/README.md`. Nothing else
-exists yet - no display, no GTK, no CIA/VIC-II/SID (so no keyboard, no
-graphics, no sound). See [`ROADMAP.md`](ROADMAP.md) for what's next.
+reset check), the C64's memory map/bank switching (`src/memory.c`,
+verified against the full mode table with no cartridge present), and a
+minimal GTK4 shell (`gtk/main.c`) that drives the CPU through a real
+window/event loop and displays screen RAM as a raw grayscale grid (not
+real VIC-II output - that doesn't exist yet). See `tests/cpu/README.md`,
+`tests/memory/README.md`, and this file's "Building" section below.
+No CIA/VIC-II/SID yet (so no real keyboard input, no real graphics, no
+sound). See [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
 
@@ -52,16 +55,29 @@ emu/
 
 ## Building
 
-No `bin/c64emu` yet - there's no display or entry point to build one
-around. Each piece that exists so far has its own standalone
-correctness gate:
+```sh
+make            # -> bin/c64emu (requires GTK4 dev libraries, e.g. `brew install gtk4`)
+make clean
+
+./bin/c64emu [rom-dir]   # rom-dir defaults to "roms" (see "ROM images" below)
+```
+
+The window drives the CPU at ~50 Hz and shows screen RAM
+(`$0400`-`$07E7`) as a raw grayscale grid - not real graphics yet, see
+`ROADMAP.md`'s step 3 entry for why. It runs fine with no ROMs loaded
+(the CPU just executes a harmless BRK loop on zeroed memory), which is
+enough to see the window/event loop working before real ROMs are
+available.
+
+Each core piece also has its own standalone correctness gate,
+independent of the GTK build:
 
 ```sh
 cd tests/cpu && make fetch && make run-all   # CPU core
 cd tests/memory && make run                  # memory map / bank switching
 ```
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (a minimal GTK4 shell).
+See [`ROADMAP.md`](ROADMAP.md) for what's next (CIA 1/2).
 
 ## ROM images
 

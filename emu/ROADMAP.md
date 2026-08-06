@@ -44,12 +44,22 @@ each piece will live.
    currently just an inert placeholder (`IoBus`, unregistered) - see
    `src/memory.h`. See `tests/memory/README.md` for the regression
    coverage.
-3. **Minimal GTK4 shell** - a window showing the raw framebuffer and
-   nothing else yet (no VIC-II text/graphics modes rendered - just
-   proving the CPU+memory core can be driven and displayed from a real
-   GUI loop before chip emulation adds more moving parts). Keyboard
-   input wiring starts here too, ahead of CIA, so there's something to
-   type into once BASIC/KERNAL ROMs are loadable.
+3. ~~**Minimal GTK4 shell**~~ - done (`gtk/main.c`, built via the new
+   top-level `Makefile` -> `bin/c64emu`): a window driving the CPU
+   through a `g_timeout_add` loop at ~50 Hz (PAL frame rate,
+   `CYCLES_PER_FRAME` cycles of `cpu_step()` per tick - not
+   cycle-exact, there's no raster to synchronize against yet). It
+   shows screen RAM (`$0400`-`$07E7`, 1000 bytes) as a raw 40x25 grid
+   of grayscale cells, one byte value per cell, deliberately NOT real
+   VIC-II text-mode decoding (step 5 below) - the point was proving
+   the core can be driven and displayed from a real GUI event loop,
+   not producing a real picture yet. Missing ROMs aren't fatal:
+   `memory_load_roms()` reports how many loaded (0-3) and the CPU just
+   runs a harmless BRK loop on all-zero memory if none did, which is
+   enough to exercise the display/event loop on its own. Keyboard
+   press/release events are captured via `GtkEventControllerKey` and
+   logged to stdout, not wired to anything yet - there's no keyboard
+   matrix to feed until CIA (step 4) exists.
 4. **CIA 1/2** - timers, keyboard matrix scanning, joystick, TOD clock.
    Needed before VIC-II mainly because BASIC/KERNAL boot-up already
    depends on CIA timer behavior.

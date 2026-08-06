@@ -21,11 +21,12 @@ newer and was scaffolded directly in this repo (no subtree history).
   exact syntax as its output. Depends on `asm/` at build/run time (see
   below).
 - **`emu/`** — `c64emu`, a from-scratch, general-purpose C64 emulator
-  (cycle-stepped 6502/6510 CPU, memory/bank-switching, eventually CIA/
-  VIC-II/SID and a GTK4 front end). Does not share code with `asm/`'s
+  (cycle-stepped 6502/6510 CPU, memory/bank-switching, a minimal GTK4
+  shell, eventually CIA/VIC-II/SID). Does not share code with `asm/`'s
   `mini6502.py` test harness — see "`c64emu` (`emu/`)" below for why
-  they're deliberately separate. Early-stage: only the CPU core and
-  memory map exist so far, no display/GTK/chip emulation yet.
+  they're deliberately separate. Early-stage: no real graphics,
+  keyboard input, or sound yet — the GTK shell drives the CPU and
+  shows raw screen-RAM bytes, not real VIC-II output.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
@@ -133,9 +134,17 @@ bitwise/comparison/control-flow), `pointers.c`, `recursion.c` (including an
 
 ### `emu/` — the emulator
 
-No `bin/c64emu` yet — no display or entry point to build one around.
-Each piece that exists so far has its own standalone correctness gate,
-run directly rather than through a top-level Makefile:
+```sh
+cd emu
+make                       # -> bin/c64emu (needs GTK4 dev libs, e.g. `brew install gtk4`)
+make clean
+
+./bin/c64emu [rom-dir]     # rom-dir defaults to "roms"; runs fine with 0/3 ROMs loaded
+```
+
+Each core module also has its own standalone correctness gate,
+independent of the GTK build, run directly rather than through the
+top-level Makefile:
 
 ```sh
 # CPU core: Klaus Dormann's 6502 functional test suite + a hand-written
@@ -262,9 +271,9 @@ something that looks like a limitation:
 A real, general-purpose C64 emulator meant to run actual games/demos
 with a GUI — a different goal from `mini6502.py` below, and the two
 share no code. Staged build order (see `emu/ROADMAP.md`): CPU core ->
-memory/bank-switching (both done) -> minimal GTK4 shell -> CIA 1/2 ->
-VIC-II -> SID. PAL timing only; cartridge and 1541 disk-drive emulation
-are explicitly out of scope for now.
+memory/bank-switching -> minimal GTK4 shell (all three done) -> CIA
+1/2 -> VIC-II -> SID. PAL timing only; cartridge and 1541 disk-drive
+emulation are explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
   instruction set, addressing modes, and per-instruction cycle counts
@@ -297,6 +306,21 @@ are explicitly out of scope for now.
   `$FF`, writes are dropped).
 - **ROM images** (`roms/`) are not checked in — Commodore's copyrighted
   binaries. See `emu/roms/README.md`.
+- **GTK4 shell** (`gtk/main.c`): drives the CPU via a `g_timeout_add`
+  loop at ~50 Hz (PAL frame rate; `CYCLES_PER_FRAME` cycles of
+  `cpu_step()` per tick, not cycle-exact — there's no raster to
+  synchronize against until VIC-II exists). Renders screen RAM
+  (`$0400`-`$07E7`) as a raw 40x25 grid of grayscale cells, one byte
+  value per cell — deliberately not real VIC-II text-mode decoding,
+  just proof that the core can be driven and displayed from a real GUI
+  event loop. Runs fine with 0/3 ROMs loaded (the CPU just executes a
+  harmless BRK loop on zeroed memory). Keyboard events are captured
+  via `GtkEventControllerKey` and logged to stdout only — not wired to
+  the C64 keyboard matrix, since CIA (which owns that) doesn't exist
+  yet. Built with `-std=c11`, not this toolkit's usual `-std=c99` —
+  GTK4's own headers rely on C11 typedef-redefinition tolerance
+  (`G_DECLARE_*_TYPE` macros); `src/cpu.c`/`src/memory.c` stay plain
+  C99-compatible regardless of which standard compiles them.
 
 ### Cross-project test harness: `mini6502.py`
 
