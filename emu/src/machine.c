@@ -53,7 +53,10 @@ static uint8_t io_read(void *ctx, uint16_t addr) {
     if (addr >= 0xDD00 && addr <= 0xDDFF) {
         return cia_read(&m->cia2, (uint8_t)addr);
     }
-    return 0xFF; /* SID/cartridge I/O - not implemented yet */
+    if (addr >= 0xD400 && addr <= 0xD7FF) {
+        return sid_read(&m->sid, (uint8_t)addr);
+    }
+    return 0xFF; /* cartridge I/O - not implemented */
 }
 
 static void io_write(void *ctx, uint16_t addr, uint8_t v) {
@@ -75,7 +78,11 @@ static void io_write(void *ctx, uint16_t addr, uint8_t v) {
         cia_write(&m->cia2, (uint8_t)addr, v);
         return;
     }
-    /* SID/cartridge I/O - not implemented yet, write dropped */
+    if (addr >= 0xD400 && addr <= 0xD7FF) {
+        sid_write(&m->sid, (uint8_t)addr, v);
+        return;
+    }
+    /* cartridge I/O - not implemented, write dropped */
 }
 
 void machine_init(Machine *m) {
@@ -91,6 +98,7 @@ void machine_init(Machine *m) {
     cia_init(&m->cia1);
     cia_init(&m->cia2);
     vic_init(&m->vic);
+    sid_init(&m->sid);
     memset(m->key_matrix, 0, sizeof(m->key_matrix));
     m->joystick1 = 0xFF;
     m->joystick2 = 0xFF;
@@ -136,6 +144,7 @@ int machine_step(Machine *m) {
         cia_tick(&m->cia1, (int)stall);
         cia_tick(&m->cia2, (int)stall);
         vic_tick(&m->vic, (int)stall);
+        sid_tick(&m->sid, (int)stall);
         update_interrupt_lines(m);
         return (int)stall;
     }
@@ -144,6 +153,7 @@ int machine_step(Machine *m) {
     cia_tick(&m->cia1, cycles);
     cia_tick(&m->cia2, cycles);
     vic_tick(&m->vic, cycles);
+    sid_tick(&m->sid, cycles);
     update_interrupt_lines(m);
     return cycles;
 }

@@ -25,12 +25,14 @@ newer and was scaffolded directly in this repo (no subtree history).
   including real keyboard/joystick wiring, VIC-II [40x25 hi-res,
   multicolor, AND extended-background-color text mode, standard AND
   multicolor bitmap mode, all 8 hardware sprites, border/background
-  color, raster IRQs, bad lines], a GTK4 shell, eventually
-  SID). Does not share code with `asm/`'s `mini6502.py` test harness —
-  see "`c64emu` (`emu/`)" below for why they're deliberately separate.
-  **Boots real system software**: tested against the MEGA65 `open-roms`
-  open-source ROM replacement, it runs unmodified to a readable BASIC
-  `READY.` prompt. Still no sound.
+  color, raster IRQs, bad lines], SID [3-voice synth: all 4 waveforms,
+  ADSR envelopes, hard sync, ring modulation - wired into the address
+  map, no audio output yet], a GTK4 shell). Does not share code with
+  `asm/`'s `mini6502.py` test harness — see "`c64emu` (`emu/`)" below
+  for why they're deliberately separate. **Boots real system
+  software**: tested against the MEGA65 `open-roms` open-source ROM
+  replacement, it runs unmodified to a readable BASIC `READY.` prompt.
+  Still no sound (SID chip logic exists but nothing plays it back yet).
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
@@ -171,21 +173,27 @@ cd emu/tests/machine && make run
 # VIC-II (raster counter, text rendering, char-ROM bank quirk): hand-written checks
 cd emu/tests/vic && make run
 
+# SID (waveform generators, ADSR envelopes, noise LFSR, hard sync): hand-written checks
+cd emu/tests/sid && make run
+
 # End-to-end: fetches MEGA65's open-roms (GPL-3.0/LGPL-3.0, unencumbered
 # by design — NOT Commodore's own copyrighted ROMs, see emu/roms/README.md)
 # and checks the whole machine actually boots to a BASIC READY. prompt
 cd emu/tests/boot && make fetch && make run
 ```
 
-All six gates must pass before building on top of the module(s) they
+All seven gates must pass before building on top of the module(s) they
 cover — see `emu/tests/cpu/README.md`, `emu/tests/memory/README.md`,
 `emu/tests/cia/README.md`, `emu/tests/machine/README.md`,
-`emu/tests/vic/README.md`, and `emu/tests/boot/README.md` for what
-"pass" looks like and how to re-derive the CPU suite's success address
-if a future revision of it moves. `emu/tests/boot/` is the odd one out
-— unlike the other five, it isn't a single module's hand-derived unit
-tests, it's the only gate that exercises the CPU, memory map, both
-CIAs, and VIC-II together against real third-party system software.
+`emu/tests/vic/README.md`, `emu/tests/sid/README.md`, and
+`emu/tests/boot/README.md` for what "pass" looks like and how to
+re-derive the CPU suite's success address if a future revision of it
+moves. `emu/tests/boot/` is the odd one out — unlike the other six, it
+isn't a single module's hand-derived unit tests, it's the only gate
+that exercises the CPU, memory map, both CIAs, and VIC-II together
+against real third-party system software (SID isn't part of that
+gate — nothing observable in screen RAM depends on audio, and BASIC's
+own boot path never touches SID registers).
 
 ## Architecture
 
@@ -298,9 +306,12 @@ memory/bank-switching -> GTK4 shell -> CIA 1/2 -> VIC-II first pass
 (all five done, and as of VIC-II this is now enough to actually boot —
 tested against the MEGA65 `open-roms` open-source ROM replacement, it
 runs unmodified to a readable BASIC `READY.` prompt) -> VIC-II second
-pass (raster IRQs, bad lines, multicolor text mode, both bitmap
-sub-modes, extended-background-color mode, and sprites done; light pen
-not started) -> SID. PAL timing only; cartridge and 1541 disk-drive emulation are
+pass done (raster IRQs, bad lines, multicolor text mode, both bitmap
+sub-modes, extended-background-color mode, and sprites - light pen not
+planned, see `emu/ROADMAP.md`'s "Not yet scheduled") -> SID (chip core
+and address-map wiring done - waveforms, ADSR envelopes, hard sync,
+ring modulation; audio output, i.e. an actual OS audio backend, not
+started). PAL timing only; cartridge and 1541 disk-drive emulation are
 explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
@@ -470,12 +481,13 @@ explicitly out of scope for now.
   scanline yet — OR'd into their registers rather than overwritten
   (only an explicit READ clears either one, a real hardware detail
   different from `$D019`'s write-1-to-clear), and feed `$D019` bits
-  1/2 the same way raster IRQs already fed bit 0. Deliberately still
-  deferred: light pen — rendering still happens once per whole frame,
-  not scanline by scanline, so a raster IRQ handler that pokes
-  `$D020`/`$D021` mid-frame for a split-screen effect still won't show
-  up in the picture, even though bad lines now stall the CPU correctly
-  and raster IRQs fire at the right line. Verified against hand-derived
+  1/2 the same way raster IRQs already fed bit 0. Light pen is not
+  planned (see `emu/ROADMAP.md`'s "Not yet scheduled"). Rendering still
+  happens once per whole frame, not scanline by scanline, so a raster
+  IRQ handler that pokes `$D020`/`$D021` mid-frame for a split-screen
+  effect still won't show up in the picture, even though bad lines now
+  stall the CPU correctly and raster IRQs fire at the right line.
+  Verified against hand-derived
   expectations, including that a multicolor cell's fallback to plain
   hi-res (bit3=0) genuinely takes that code path rather than just
   happening to render the same pixels, both bitmap sub-modes, ECM's
@@ -489,36 +501,91 @@ explicitly out of scope for now.
   `tests/machine/`), and, together with the CPU/memory/CIA modules it
   depends on, against real system software actually booting
   (`tests/boot/` — see below).
+- **SID** (`src/sid.c`/`src/sid.h`, step 7, in progress): the 3-voice
+  synth chip, modeled as a pure chip core with no notion of sample
+  rates or an OS audio API — `sid_tick()` advances internal state by
+  real SID clock cycles (called from `machine_step()` the same way
+  `cia_tick()`/`vic_tick()` are — SID shares the CPU's PHI2 clock, no
+  rate conversion needed here) and `sid_output()` pulls the current
+  instantaneous mixed sample; a caller wanting actual playback would
+  tick cycle-for-cycle alongside the CPU and sample at whatever cadence
+  produces its target rate — that wiring (and the audio backend it
+  needs) doesn't exist yet, the same gap `vic_render_frame()` had
+  before `gtk/main.c`'s blit loop existed. Each voice: a 24-bit
+  phase-accumulator oscillator (sawtooth = its top 12 bits directly;
+  triangle = the same but XOR-inverted once the accumulator's MSB is
+  set, producing the up/down ramp; pulse = a 12-bit comparison against
+  the pulse-width register; noise = a 23-bit Fibonacci LFSR, taps at
+  bits 22/17 feeding bit0, clocked on the SAME accumulator's bit19
+  rising edge — which is why noise pitch is controllable via the
+  frequency register just like the others), hard sync and ring
+  modulation against a fixed "previous voice in the ring" (voice
+  1<-3, 2<-1, 3<-2, real hardware wiring), and an independent ADSR
+  envelope generator using the real chip's published rate-period table
+  (attack is linear) and its exponential decay/release approximation
+  (decrements only on a 1-in-N rate-period match, where N depends on
+  the CURRENT envelope value — steep at high values, crawling at low
+  ones, an approximation of analog RC discharge). GATE edges are
+  detected and acted on immediately in `sid_write()`, not polled during
+  `sid_tick()` — real hardware behavior, and it's also why re-triggering
+  attack mid-release resumes from wherever the envelope already sits
+  rather than resetting to 0. Two deliberate simplifications, both
+  flagged in `sid.h`'s header comment: the analog filter
+  (`$D415`-`$D418`'s cutoff/resonance/routing/mode bits) is stored as
+  plain register state but never applied to the output; a voice with
+  more than one waveform selected at once uses the common bitwise-AND
+  software approximation real combined waveforms don't exactly follow
+  (they're an idiosyncratic per-chip analog quirk). `$D41B`/`$D41C`
+  (OSC3/ENV3) are real, live outputs — voice 3's current waveform/
+  envelope value, respectively, which is what lets real software (like
+  BASIC's classic RND-via-SID trick) read pseudo-randomness or use
+  voice 3 purely as an unheard oscillator via `$D418` bit7 ("voice 3
+  off", which mutes it from the mix without disabling it). `$D419`/
+  `$D41A` (POTX/POTY) read as 0xFF — no paddle hardware modeled.
+  Verified against hand-derived expectations for each waveform's exact
+  shape (including a combined-waveform AND check and a noise LFSR shift
+  computed by hand from its documented reset seed), hard sync forcing
+  an accumulator to 0 at a precisely hand-computed cycle, linear attack
+  timing, decay correctly stopping at the sustain level rather than
+  continuing to 0, the exponential decay/release slowdown (demonstrated
+  qualitatively — the same fixed cycle budget produces far fewer steps
+  from a low starting envelope value than a high one), and gate-edge
+  handling (`tests/sid/`). Not yet covered by `tests/boot/` — nothing
+  in BASIC's own boot path touches SID registers, so a `tests/boot/`
+  failure still means "check CPU/memory/CIA/VIC-II", not SID.
 - **Machine wiring** (`src/machine.c`/`src/machine.h` — replaces the ad
   hoc CPU+Memory wiring `gtk/main.c` used to do inline): ties CPU +
-  Memory + CIA1 + CIA2 + VIC-II together. Registers one `IoBus` with
-  `Memory` that dispatches `$D000`-`$D3FF` to VIC-II registers,
-  `$D800`-`$DBFF` to color RAM, `$DC00`-`$DCFF` to CIA1, and
-  `$DD00`-`$DDFF` to CIA2 (SID's `$D400`-`$D7FF` and cartridge I/O
-  still fall through to the inert placeholder). `machine_vic_bank()`
-  resolves the VIC's current 16K bank from CIA2 PRA bits 0-1 (via
-  `cia_read()`, reusing CIA's own DDR/output-latch logic rather than
-  duplicating it) for `gtk/main.c` to pass into `vic_render_frame()`.
-  Implements the actual C64-specific keyboard-matrix/joystick wiring
-  on top of the generic CIA1: `update_keyboard_pins()` computes a
-  pin-pulldown model in both directions (PRA driving columns pulls
-  down PRB's rows wherever a held key matches, and vice versa, since
-  real software occasionally scans in either direction) — joystick 2
-  shares PRA's pins 0-4 with keyboard column-select, joystick 1 shares
-  PRB's, a real and well-known hardware quirk (see
-  `asm/docs/c64-memory-reference.md` §6). `machine_step()` calls
-  `cpu_step()` once, ticks both CIAs and the VIC by exactly that many
-  cycles (NOT batched per video frame — that would make CIA timers
-  grossly imprecise and could miss interrupts), then propagates CIA1's
-  interrupt output into `cpu.irq_line` (level-triggered, direct
-  assignment since it's currently the only IRQ source — VIC-II raster
-  IRQs will need to OR in here once the second pass adds them) and
-  CIA2's into `cpu_nmi()` (edge-triggered — CIA2's IRQ output is wired
-  to the CPU's /NMI pin on real hardware, not /IRQ, so `machine.c`
-  tracks the previous state itself and only calls `cpu_nmi()` on a
-  0->1 transition). Verified against hand-derived expectations for
-  keyboard scanning (both directions), joystick/keyboard pin-sharing,
-  and IRQ/NMI propagation (`tests/machine/`).
+  Memory + CIA1 + CIA2 + VIC-II + SID together. Registers one `IoBus`
+  with `Memory` that dispatches `$D000`-`$D3FF` to VIC-II registers,
+  `$D400`-`$D7FF` to SID, `$D800`-`$DBFF` to color RAM, `$DC00`-`$DCFF`
+  to CIA1, and `$DD00`-`$DDFF` to CIA2 (cartridge I/O still falls
+  through to the inert placeholder). `machine_vic_bank()` resolves the
+  VIC's current 16K bank from CIA2 PRA bits 0-1 (via `cia_read()`,
+  reusing CIA's own DDR/output-latch logic rather than duplicating it)
+  for `gtk/main.c` to pass into `vic_render_frame()`. Implements the
+  actual C64-specific keyboard-matrix/joystick wiring on top of the
+  generic CIA1: `update_keyboard_pins()` computes a pin-pulldown model
+  in both directions (PRA driving columns pulls down PRB's rows
+  wherever a held key matches, and vice versa, since real software
+  occasionally scans in either direction) — joystick 2 shares PRA's
+  pins 0-4 with keyboard column-select, joystick 1 shares PRB's, a real
+  and well-known hardware quirk (see `asm/docs/c64-memory-reference.md`
+  §6). `machine_step()` calls `cpu_step()` once (or skips it entirely
+  on a bad-line stall — see `vic_take_badline_stall()`), ticks both
+  CIAs, the VIC, and SID by exactly that many cycles (NOT batched per
+  video frame — that would make CIA timers grossly imprecise and could
+  miss interrupts; SID keeps running through a CPU stall too, since
+  /RDY only pauses the CPU's own fetch/execute, not the rest of the
+  bus), then propagates CIA1's AND VIC-II's interrupt outputs (wired-OR,
+  real hardware) into `cpu.irq_line`, and CIA2's into `cpu_nmi()`
+  (edge-triggered — CIA2's IRQ output is wired to the CPU's /NMI pin on
+  real hardware, not /IRQ, so `machine.c` tracks the previous state
+  itself and only calls `cpu_nmi()` on a 0->1 transition; SID has no
+  interrupt output at all). Verified against hand-derived expectations
+  for keyboard scanning (both directions), joystick/keyboard
+  pin-sharing, and IRQ/NMI propagation (`tests/machine/`). SID audio
+  OUTPUT isn't wired up anywhere yet (no sample-rate conversion, no OS
+  audio API) — see `sid.h`'s header comment.
 - **GTK4 shell** (`gtk/main.c`): drives the whole `Machine` via a
   `g_timeout_add` loop at ~50 Hz (PAL frame rate; `CYCLES_PER_FRAME`
   — literally `PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME` from `vic.h`

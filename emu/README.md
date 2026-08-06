@@ -5,8 +5,9 @@ core, memory/bank-switching, CIA/VIC-II/SID chip emulation, and a
 GTK4 front end — built the same way `asm/` and `C/` were, without
 leaning on an existing emulator core.
 
-**Status:** steps 1-5 are done and step 6 (VIC-II second pass) is in
-progress - a full legal 6502/6510 instruction set (`src/cpu.c`,
+**Status:** steps 1-6 are done (step 6, VIC-II second pass, done except
+light pen - not planned, see `ROADMAP.md`'s "Not yet scheduled") and
+step 7 (SID) is in progress - a full legal 6502/6510 instruction set (`src/cpu.c`,
 verified against Klaus Dormann's 6502 functional test suite plus a
 hand-written interrupt/reset check), the C64's memory map/bank
 switching (`src/memory.c`, verified against the full mode table with
@@ -24,19 +25,26 @@ border/background color [plus three extra background-color registers
 used by multicolor and extended-background-color mode], real raster
 IRQs [CIA1 and VIC-II share the CPU's /IRQ line, matching real
 hardware], and bad lines [the cycle-stealing DMA quirk - the CPU
-genuinely stalls for `VIC_BADLINE_STALL_CYCLES` when one is entered]).
+genuinely stalls for `VIC_BADLINE_STALL_CYCLES` when one is entered]),
+and SID (`src/sid.c` - the 3-voice synth: all 4 waveforms [triangle/
+sawtooth/pulse/noise], hard sync, ring modulation, ADSR envelopes using
+the real chip's published rate-period and exponential decay/release
+tables, wired into the address map at `$D400`-`$D7FF`; no analog filter
+modeling yet, and no audio OUTPUT wired up anywhere yet either - the
+chip model runs and is fully tested, but nothing pulls samples out of
+it into an actual sound API, so the emulator is still silent).
 **This is enough to actually boot**: `tests/boot/` is an automated
 end-to-end gate that fetches a real open-source ROM replacement (the
 MEGA65 `open-roms` project) and checks that the whole machine runs it
 unmodified all the way to a readable BASIC `READY.` prompt - the one
 test that exercises the CPU, memory map, both CIAs, and VIC-II
-together, not just each module in isolation. See
+together, not just each module in isolation (SID isn't part of this
+gate - nothing in BASIC's own boot path touches SID registers). See
 `tests/cpu/README.md`, `tests/memory/README.md`, `tests/cia/README.md`,
-`tests/machine/README.md`, `tests/vic/README.md`, `tests/boot/README.md`,
-and this file's "Building" section below. No SID yet (no sound); no
-light pen yet either (see `vic.h`'s header comment for the full list of
-what's still deferred); no joystick wiring in the GTK shell yet even
-though `machine_set_joystick()` exists. See
+`tests/machine/README.md`, `tests/vic/README.md`, `tests/sid/README.md`,
+`tests/boot/README.md`, and this file's "Building" section below. No
+joystick wiring in the GTK shell yet even though
+`machine_set_joystick()` exists. See
 [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
@@ -88,8 +96,8 @@ The window drives the machine at ~50 Hz (PAL frame rate) and shows
 real VIC-II output - see `vic.h`'s header comment for exactly what's
 modeled (40x25 hi-res, multicolor, and extended-background-color text
 mode, standard and multicolor bitmap mode, all 8 hardware sprites,
-border/background color, DEN blanking, raster IRQs, bad lines) versus
-deliberately deferred (light pen). It runs fine with no ROMs loaded (the CPU just
+border/background color, DEN blanking, raster IRQs, bad lines) - light
+pen is not planned, see `ROADMAP.md`. It runs fine with no ROMs loaded (the CPU just
 executes a harmless BRK loop on zeroed memory, and the screen stays
 whatever color `$D021`/`$D020` default to), which is enough to see the
 window/event loop working before real ROMs are available - but with
@@ -105,6 +113,7 @@ cd tests/memory && make run                  # memory map / bank switching
 cd tests/cia && make run                     # CIA chip (timers, ports, ICR)
 cd tests/machine && make run                 # CIA <-> C64 wiring (keyboard, joystick, IRQ/NMI)
 cd tests/vic && make run                     # VIC-II (raster counter, text rendering, char ROM bank quirk)
+cd tests/sid && make run                     # SID (waveforms, ADSR envelopes, noise LFSR, hard sync)
 cd tests/boot && make fetch && make run      # end-to-end: real ROMs, boots to READY.
 ```
 
@@ -116,7 +125,7 @@ unlike Commodore's own ROMs - see `tests/boot/README.md`) and checks
 that the whole machine actually boots to a `READY.` prompt, catching
 integration bugs no single module's tests could.
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (VIC-II second pass, or SID).
+See [`ROADMAP.md`](ROADMAP.md) for what's next (SID audio output).
 
 ## ROM images
 

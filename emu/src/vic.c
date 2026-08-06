@@ -11,7 +11,7 @@ enum {
     REG_D012 = 0x12, /* raster (read: live low 8 bits; write: compare low 8 bits) */
     REG_D016 = 0x16, /* control register 2: bit4=MCM, bit3=CSEL (not modeled), bits0-2=XSCROLL (not modeled) */
     REG_D018 = 0x18, /* memory pointers: bits4-7=screen pointer (1K units), bits1-3=char/bitmap pointer (2K units) */
-    REG_D019 = 0x19, /* IRQ status: bits0-3 pending (bit0=raster, bits1-3=sprite collisions/light pen - never set, not modeled), bit7=read-only summary. Write CLEARS whichever of bits0-3 are 1 in the value written - see vic_write(). */
+    REG_D019 = 0x19, /* IRQ status: bits0-3 pending (bit0=raster, bit1=sprite-background collision, bit2=sprite-sprite collision, bit3=light pen - never set, not planned), bit7=read-only summary. Write CLEARS whichever of bits0-3 are 1 in the value written - see vic_write(). */
     REG_D01A = 0x1A, /* IRQ enable: bits0-3, plain read/write */
     REG_D020 = 0x20, /* border color (low nibble) */
     REG_D021 = 0x21, /* background color 0 (low nibble) */

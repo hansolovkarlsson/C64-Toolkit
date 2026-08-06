@@ -16,8 +16,8 @@
  * for exactly what's modeled and what isn't). Rendering still happens
  * once per whole frame, not scanline-by-scanline, so there's no notion
  * of mid-frame raster EFFECTS yet even though the underlying timing
- * (raster IRQs, bad-line CPU stalls) is now real. Deliberately not
- * implemented yet: light pen.
+ * (raster IRQs, bad-line CPU stalls) is now real. Light pen is not
+ * planned - see ../ROADMAP.md's "Not yet scheduled".
  *
  * PAL timing: 63 cycles/line, 312 lines/frame (see PAL_CYCLES_PER_LINE/
  * PAL_LINES_PER_FRAME) - matches gtk/main.c's own PAL frame-cycle

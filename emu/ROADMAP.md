@@ -115,7 +115,9 @@ each piece will live.
    DMA quirk a lot of real software's timing depends on) remains its
    own explicitly-tracked follow-up, not assumed to fall out of a
    future pass for free.
-6. **VIC-II, second pass** - in progress. Everything step 5 explicitly
+6. ~~**VIC-II, second pass**~~ - done, except light pen (moved to "Not
+   yet scheduled" below - not planned, see that section for why).
+   Everything step 5 explicitly
    deferred:
    - ~~Raster IRQs~~ - done: `$D011`/`$D012` are real shared registers
      now (reading returns the live raster position, same as before;
@@ -250,22 +252,79 @@ each piece will live.
      needs-its-own-clear distinction (`tests/vic/`), plus the existing
      full regression suite including `tests/boot/`, since sprites are
      inert until a register enables them.
-   - Light pen - not started. Also where real border geometry
-     (currently a fixed, plausible-looking approximation - see
-     `vic.h`) and scanline-by-scanline rendering (instead of one whole
-     frame per `vic_render_frame()` call) would need to land, if either
-     turns out to matter for real software being tested against - bad
-     lines now stall the CPU correctly, but a raster IRQ handler that
-     pokes `$D020`/`$D021` mid-frame for a split-screen effect still
-     won't show up in the picture, since rendering itself is still
+   - Also where real border geometry (currently a fixed,
+     plausible-looking approximation - see `vic.h`) and scanline-by-
+     scanline rendering (instead of one whole frame per
+     `vic_render_frame()` call) would need to land, if either turns out
+     to matter for real software being tested against - bad lines now
+     stall the CPU correctly, but a raster IRQ handler that pokes
+     `$D020`/`$D021` mid-frame for a split-screen effect still won't
+     show up in the picture, since rendering itself is still
      once-per-frame.
-7. **SID** - the 3-voice synth (square/triangle/sawtooth/noise
-   generators, ADSR envelopes) without exact analog filter modeling
-   at first; revisit filter accuracy later if it matters for a
-   specific piece of software being tested against.
+7. **SID** - in progress.
+   - ~~Chip core~~ - done (`src/sid.c`/`src/sid.h`): the 3-voice synth,
+     modeled as a pure chip core with no notion of sample rates or an
+     OS audio API - `sid_tick()` advances internal state by real SID
+     clock cycles (SID shares the CPU's PHI2 clock, no rate conversion
+     needed) and `sid_output()` pulls the current instantaneous mixed
+     sample; a caller wanting actual playback would tick cycle-for-
+     cycle alongside the CPU and sample at whatever cadence produces
+     its target rate - see the next bullet for why that doesn't exist
+     yet. Each voice: a 24-bit phase-accumulator oscillator (all 4
+     waveforms - triangle/sawtooth/pulse/noise, the last via a 23-bit
+     Fibonacci LFSR clocked off the same accumulator's bit19, which is
+     why noise pitch tracks the frequency register like the others),
+     hard sync and ring modulation against a fixed "previous voice in
+     the ring" (real hardware wiring: voice 1<-3, 2<-1, 3<-2), and an
+     independent ADSR envelope generator using the real chip's
+     published rate-period table plus its exponential decay/release
+     approximation (an analog-RC-discharge approximation, steep at high
+     envelope values, crawling at low ones - attack itself is linear).
+     Two deliberate simplifications, both flagged in `sid.h`: the
+     analog filter (`$D415`-`$D418`'s cutoff/resonance/routing/mode
+     bits) is stored as plain register state but never applied to the
+     output; a voice with more than one waveform selected at once uses
+     the common bitwise-AND software approximation, since real combined
+     waveforms are an idiosyncratic per-chip analog quirk no clean
+     digital model reproduces exactly. `$D41B`/`$D41C` (OSC3/ENV3) are
+     real, live outputs - voice 3's current waveform/envelope value,
+     which is what lets real software (like BASIC's classic RND-via-SID
+     trick) read pseudo-randomness off it. Verified against hand-
+     derived expectations for every waveform's exact shape (including a
+     combined-waveform AND check and a noise LFSR shift computed by
+     hand from its documented reset seed), hard sync forcing an
+     accumulator to 0 at a precisely hand-computed cycle, linear attack
+     timing, decay correctly stopping at the sustain level, the
+     exponential decay/release slowdown (demonstrated qualitatively -
+     the same fixed cycle budget produces far fewer steps from a low
+     starting envelope value than a high one), and gate-edge handling
+     (`tests/sid/`).
+   - ~~Address-map wiring~~ - done: `machine.c` dispatches
+     `$D400`-`$D7FF` to `sid_read()`/`sid_write()` (same 5-address-line
+     mirroring convention VIC-II's registers already use) and
+     `machine_step()` calls `sid_tick()` alongside `cia_tick()`/
+     `vic_tick()`, including through a bad-line stall (SID isn't
+     affected by `/RDY` on real hardware - only the CPU's own fetch/
+     execute pauses, every other chip keeps running off the shared
+     PHI2 clock). Doesn't affect `tests/boot/`'s cycle count or outcome
+     - nothing in BASIC's own boot path touches SID registers.
+   - Audio output - not started: pulling samples out of `sid_output()`
+     at a real sample rate and feeding them to an actual OS audio API
+     is GTK-shell-level plumbing, not chip logic, the same way blitting
+     `vic_render_frame()`'s pixels was its own separate step (step 3)
+     from the VIC-II chip work itself. Until this lands, the emulator
+     has no sound even though the chip model is fully exercised by
+     `tests/sid/`.
+   - Exact analog filter modeling - not started; revisit if it matters
+     for a specific piece of software being tested against, same
+     deferral reasoning as VIC-II's own approximations.
 
 ## Not yet scheduled
 
+- **Light pen** - a peripheral vanishingly few pieces of C64 software
+  ever supported and not something this project's own use cases need;
+  not planned, revisit only if a specific piece of software being
+  tested against actually depends on it.
 - **1541 disk drive emulation** - the 1541 has its own 6502 core plus
   a serial IEC bus protocol, so true hardware emulation is close to a
   second emulator. Loading a `.prg` by injecting it directly into
