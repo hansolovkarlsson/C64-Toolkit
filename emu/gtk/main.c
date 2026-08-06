@@ -138,14 +138,24 @@ static gboolean tick(gpointer user_data) {
     return G_SOURCE_CONTINUE;
 }
 
+/* No VIC-II exists yet (step 5), so a keypress produces no visible
+ * change in the window by itself - it only reaches BASIC/KERNAL (and
+ * so gets echoed to the screen) once real ROM images are loaded and
+ * actually running. This log line is the only feedback available
+ * without that - confirms a key was recognized and which matrix
+ * position it landed on. */
 static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) {
     (void)ctrl;
     (void)keycode;
     (void)state;
     App *app = user_data;
     int pa, pb;
-    if (lookup_key(keyval, &pa, &pb))
+    if (lookup_key(keyval, &pa, &pb)) {
         machine_set_key(&app->machine, pa, pb, 1);
+        fprintf(stderr, "key down: %s (matrix pa=%d pb=%d)\n", gdk_keyval_name(keyval), pa, pb);
+    } else {
+        fprintf(stderr, "key down: %s (not in c64_keymap)\n", gdk_keyval_name(keyval));
+    }
     return GDK_EVENT_PROPAGATE;
 }
 
@@ -164,7 +174,10 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
 
     GtkWidget *window = gtk_application_window_new(gtk_app);
     gtk_window_set_title(GTK_WINDOW(window), "c64emu");
-    gtk_window_set_default_size(GTK_WINDOW(window), CANVAS_W * 2, CANVAS_H * 2);
+    /* Matches the drawing area's own fixed content size exactly - a
+     * bigger default would leave dead space around it, since nothing
+     * here stretches the canvas to fill extra window area. */
+    gtk_window_set_default_size(GTK_WINDOW(window), CANVAS_W, CANVAS_H);
 
     app->drawing_area = gtk_drawing_area_new();
     gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(app->drawing_area), CANVAS_W);
