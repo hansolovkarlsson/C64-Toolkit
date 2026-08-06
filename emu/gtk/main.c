@@ -36,6 +36,7 @@ typedef struct {
     GtkWidget *drawing_area;
     uint32_t *pixel_buf;  /* VIC_CANVAS_W x VIC_CANVAS_H, row stride given by pixel_stride (may have alignment padding - see activate()) */
     int pixel_stride;     /* in uint32_t units, not bytes */
+    guint timeout_id;     /* the frame timer's source id, so it can be removed on window close - see on_window_destroy() */
 } App;
 
 /* GDK keyval -> C64 keyboard matrix (pa_bit selects the column CIA1's
@@ -166,6 +167,21 @@ static void on_key_released(GtkEventControllerKey *ctrl, guint keyval, guint key
         machine_set_key(&app->machine, pa, pb, 0);
 }
 
+/* Without this, the frame timer keeps firing after the window closes
+ * (a GtkWindow's "destroy" doesn't implicitly cancel a g_timeout_add()
+ * tied to it) and tick() calls gtk_widget_queue_draw() on a
+ * by-then-dangling app->drawing_area, tripping a GTK-CRITICAL
+ * assertion (harmless in that it doesn't crash, but a real bug - the
+ * source should have been removed). */
+static void on_window_destroy(GtkWidget *window, gpointer user_data) {
+    (void)window;
+    App *app = user_data;
+    if (app->timeout_id) {
+        g_source_remove(app->timeout_id);
+        app->timeout_id = 0;
+    }
+}
+
 static void activate(GtkApplication *gtk_app, gpointer user_data) {
     App *app = user_data;
 
@@ -195,7 +211,8 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
     g_signal_connect(keys, "key-released", G_CALLBACK(on_key_released), app);
     gtk_widget_add_controller(window, keys);
 
-    g_timeout_add(FRAME_MS, tick, app);
+    app->timeout_id = g_timeout_add(FRAME_MS, tick, app);
+    g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), app);
 
     gtk_window_present(GTK_WINDOW(window));
 }
