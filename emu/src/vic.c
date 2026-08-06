@@ -17,6 +17,7 @@ enum {
     REG_D021 = 0x21, /* background color 0 (low nibble) */
     REG_D022 = 0x22, /* background color 1 (low nibble) - multicolor text mode only */
     REG_D023 = 0x23, /* background color 2 (low nibble) - multicolor text mode only */
+    REG_D024 = 0x24, /* background color 3 (low nibble) - extended background color text mode only */
 };
 
 #define VIC_IRQ_RASTER 0x01
@@ -156,14 +157,26 @@ void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixel
     uint32_t bg_color = VIC_PALETTE[vic->regs[REG_D021] & 0x0F];
     uint32_t bg1_color = VIC_PALETTE[vic->regs[REG_D022] & 0x0F];
     uint32_t bg2_color = VIC_PALETTE[vic->regs[REG_D023] & 0x0F];
+    uint32_t bg3_color = VIC_PALETTE[vic->regs[REG_D024] & 0x0F];
     int mcm = (vic->regs[REG_D016] & 0x10) != 0;
     int bmm = (vic->regs[REG_D011] & 0x20) != 0;
+    int ecm = (vic->regs[REG_D011] & 0x40) != 0;
 
     fill_rect(pixels, stride, 0, 0, VIC_CANVAS_W, VIC_CANVAS_H, border_color);
 
     int den = (vic->regs[REG_D011] & 0x10) != 0;
     if (!den) {
         fill_rect(pixels, stride, VIC_BORDER_X, VIC_BORDER_Y, VIC_TEXT_COLS * 8, VIC_TEXT_ROWS * 8, border_color);
+        return;
+    }
+
+    if (ecm && (mcm || bmm)) {
+        /* Real VIC-II "invalid mode" combinations - ECM only ever
+         * combines meaningfully with plain text mode; pairing it with
+         * MCM and/or BMM is documented real hardware behavior that
+         * renders the whole display window solid black (border is
+         * unaffected) rather than any meaningful pixel data. */
+        fill_rect(pixels, stride, VIC_BORDER_X, VIC_BORDER_Y, VIC_TEXT_COLS * 8, VIC_TEXT_ROWS * 8, VIC_PALETTE[0]);
         return;
     }
 
@@ -230,16 +243,33 @@ void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixel
              * instead, at half horizontal resolution. Both cases use
              * the same masked 3-bit value as this cell's foreground
              * (also multicolor's "11" pixel-pair color), which is why
-             * one expression covers all three. */
+             * one expression covers all three. ecm implies mcm is off
+             * here (the ecm+mcm combination was already handled as an
+             * invalid mode above), so cell_multicolor is always 0 and
+             * fg_color always the full nibble when ecm is set. */
             int cell_multicolor = mcm && (color_val & 0x08);
             uint32_t fg_color = VIC_PALETTE[mcm ? (color_val & 0x07) : color_val];
             uint32_t mc_colors[4] = {bg_color, bg1_color, bg2_color, fg_color};
 
+            /* Extended background color mode ($D011 bit6): the
+             * character code's top 2 bits pick one of 4 background
+             * colors ($D021-$D024) instead of contributing to which
+             * glyph is shown - only the low 6 bits address character
+             * memory, so only 64 distinct characters are reachable.
+             * Real hardware behavior, not a bug. */
+            uint32_t cell_bg_color = bg_color;
+            uint8_t glyph_code = char_code;
+            if (ecm) {
+                uint32_t ecm_bg_colors[4] = {bg_color, bg1_color, bg2_color, bg3_color};
+                cell_bg_color = ecm_bg_colors[(char_code >> 6) & 0x03];
+                glyph_code = char_code & 0x3F;
+            }
+
             const uint8_t *glyph = char_rom_visible
-                ? &mem->char_rom[(uint16_t)(char_rom_offset + char_code * 8)]
-                : &mem->ram[(uint16_t)(char_base + char_code * 8)];
+                ? &mem->char_rom[(uint16_t)(char_rom_offset + glyph_code * 8)]
+                : &mem->ram[(uint16_t)(char_base + glyph_code * 8)];
             render_cell(pixels, stride, VIC_BORDER_X + col * 8, VIC_BORDER_Y + row * 8,
-                        glyph, cell_multicolor, mc_colors, fg_color, bg_color);
+                        glyph, cell_multicolor, mc_colors, fg_color, cell_bg_color);
         }
     }
 }

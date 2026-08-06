@@ -22,9 +22,10 @@ newer and was scaffolded directly in this repo (no subtree history).
   below).
 - **`emu/`** — `c64emu`, a from-scratch, general-purpose C64 emulator
   (cycle-stepped 6502/6510 CPU, memory/bank-switching, both CIAs
-  including real keyboard/joystick wiring, VIC-II [40x25 hi-res AND
-  multicolor text mode, standard AND multicolor bitmap mode, border/
-  background color, raster IRQs, bad lines], a GTK4 shell, eventually
+  including real keyboard/joystick wiring, VIC-II [40x25 hi-res,
+  multicolor, AND extended-background-color text mode, standard AND
+  multicolor bitmap mode, border/background color, raster IRQs, bad
+  lines], a GTK4 shell, eventually
   SID). Does not share code with `asm/`'s `mini6502.py` test harness —
   see "`c64emu` (`emu/`)" below for why they're deliberately separate.
   **Boots real system software**: tested against the MEGA65 `open-roms`
@@ -297,8 +298,8 @@ memory/bank-switching -> GTK4 shell -> CIA 1/2 -> VIC-II first pass
 (all five done, and as of VIC-II this is now enough to actually boot —
 tested against the MEGA65 `open-roms` open-source ROM replacement, it
 runs unmodified to a readable BASIC `READY.` prompt) -> VIC-II second
-pass (raster IRQs, bad lines, multicolor text mode, and both bitmap
-sub-modes done; extended-background-color mode and sprites not
+pass (raster IRQs, bad lines, multicolor text mode, both bitmap
+sub-modes, and extended-background-color mode done; sprites not
 started) -> SID. PAL timing only; cartridge and 1541 disk-drive emulation are
 explicitly out of scope for now.
 
@@ -428,19 +429,31 @@ explicitly out of scope for now.
   different color-source list than multicolor TEXT mode's (which uses
   `$D022`/`$D023`, not screen RAM). The shared hi-res/multicolor pixel-
   writing logic (identical between text and bitmap modes) is factored
-  into one `render_cell()` helper rather than duplicated. Deliberately
-  still deferred: extended-background-color text mode, sprites, light
-  pen — rendering still happens once per whole frame, not scanline by
-  scanline, so a raster IRQ handler that pokes `$D020`/`$D021`
-  mid-frame for a split-screen effect still won't show up in the
-  picture, even though bad lines now stall the CPU correctly and
-  raster IRQs fire at the right line. Verified against hand-derived
-  expectations, including that a multicolor cell's fallback to plain
-  hi-res (bit3=0) genuinely takes that code path rather than just
-  happening to render the same pixels, and both bitmap sub-modes
-  (`tests/vic/`, `tests/machine/`), and, together with the CPU/memory/
-  CIA modules it depends on, against real system software actually
-  booting (`tests/boot/` — see below).
+  into one `render_cell()` helper rather than duplicated. **Extended
+  background color mode**: ECM (`$D011` bit6) is text-mode only — real
+  hardware treats ECM combined with MCM and/or BMM as an "invalid mode"
+  that renders the whole display window (border unaffected) solid
+  black instead of any meaningful pixel data, checked first in
+  `vic_render_frame()` before either mode's own path runs. With ECM set
+  alone, the character code's top 2 bits pick one of 4 background
+  colors (`$D021`-`$D024`, the last one new) for that cell instead of
+  contributing to which glyph is shown, and only the low 6 bits of the
+  code address character memory — so only 64 of the normal 256
+  characters are reachable, real hardware behavior. Foreground still
+  comes from the full 4-bit color RAM value, same as plain hi-res text.
+  Deliberately still deferred: sprites, light pen — rendering still
+  happens once per whole frame, not scanline by scanline, so a raster
+  IRQ handler that pokes `$D020`/`$D021` mid-frame for a split-screen
+  effect still won't show up in the picture, even though bad lines now
+  stall the CPU correctly and raster IRQs fire at the right line.
+  Verified against hand-derived expectations, including that a
+  multicolor cell's fallback to plain hi-res (bit3=0) genuinely takes
+  that code path rather than just happening to render the same pixels,
+  both bitmap sub-modes, ECM's background-color selection and character-
+  code masking, and both ECM invalid-mode combinations (`tests/vic/`,
+  `tests/machine/`), and, together with the CPU/memory/CIA modules it
+  depends on, against real system software actually booting
+  (`tests/boot/` — see below).
 - **Machine wiring** (`src/machine.c`/`src/machine.h` — replaces the ad
   hoc CPU+Memory wiring `gtk/main.c` used to do inline): ties CPU +
   Memory + CIA1 + CIA2 + VIC-II together. Registers one `IoBus` with

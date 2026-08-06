@@ -193,7 +193,24 @@ each piece will live.
      sub-modes, using a real per-cell byte pattern for the standard
      case and all 4 pixel-pair values for the multicolor case
      (`tests/vic/`).
-   - Extended-background-color text mode, sprites, and light pen - not
+   - ~~Extended-background-color text mode~~ - done: ECM (`$D011`
+     bit6) is text-mode only - combining it with MCM and/or BMM is a
+     documented real-hardware "invalid mode" that renders the whole
+     display window (border unaffected) solid black instead of any
+     meaningful pixel data, checked first in `vic_render_frame()`
+     before either mode's own rendering path runs. When ECM is set
+     alone: the character code's top 2 bits pick one of 4 background
+     colors (`$D021`-`$D024`, the last one new) for that cell instead
+     of contributing to which glyph is shown, and only the low 6 bits
+     of the code address character memory - so only 64 of the normal
+     256 characters are reachable, real hardware behavior, not a
+     limitation of this implementation. Foreground still comes from
+     the full 4-bit color RAM value, same as plain hi-res text.
+     Verified against hand-derived expectations for the background
+     color selection, that the character-code masking is genuinely
+     applied (a glyph placed at the unmasked address must NOT render),
+     and both invalid-mode combinations (`tests/vic/`).
+   - Sprites and light pen - not
      started. Also where real border geometry (currently a fixed,
      plausible-looking approximation - see `vic.h`) and scanline-by-
      scanline rendering (instead of one whole frame per

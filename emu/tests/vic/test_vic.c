@@ -19,7 +19,7 @@ static int failures = 0;
 enum {
     REG_D011 = 0x11, REG_D012 = 0x12, REG_D016 = 0x16, REG_D018 = 0x18,
     REG_D019 = 0x19, REG_D01A = 0x1A, REG_D020 = 0x20, REG_D021 = 0x21,
-    REG_D022 = 0x22, REG_D023 = 0x23,
+    REG_D022 = 0x22, REG_D023 = 0x23, REG_D024 = 0x24,
 };
 
 static void test_raster_counter(void) {
@@ -154,6 +154,94 @@ static void test_mcm_bit3_clear_stays_hires(void) {
         if (row0[i] != expected[i]) ok = 0;
     }
     CHECK(ok, "MCM on but color RAM bit3 clear: cell should still render plain hi-res (per-pixel), not multicolor pixel-pairs");
+}
+
+static void test_extended_background_color_mode(void) {
+    Vic vic;
+    Memory mem;
+    vic_init(&vic);
+    memory_init(&mem);
+
+    vic_write(&vic, REG_D011, 0x50); /* DEN | ECM, MCM/BMM off */
+    vic_write(&vic, REG_D018, 0x10); /* screen ptr -> $0400, char ptr -> $0000 (plain RAM) */
+    vic_write(&vic, REG_D021, 1);    /* background color 0 = white */
+    vic_write(&vic, REG_D022, 2);    /* background color 1 = red */
+    vic_write(&vic, REG_D023, 5);    /* background color 2 = green */
+    vic_write(&vic, REG_D024, 3);    /* background color 3 = cyan */
+
+    /* Char code's top 2 bits = 01 -> background color 1 (red); low 6
+     * bits = 0 -> glyph 0, same pattern used elsewhere in this file. */
+    mem.ram[0x0400] = 0x40;
+    mem.ram[0x0000] = 0xB4; /* 10110100 */
+    vic_color_ram_write(&vic, 0, 1); /* foreground = white - full nibble, ECM never masks color RAM */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row0 = &pixels[VIC_BORDER_Y * VIC_CANVAS_W + VIC_BORDER_X];
+
+    uint32_t fg = 0xFFFFFF, bg = 0x68372B; /* palette[1], palette[2] */
+    uint32_t expected[8] = {fg, bg, fg, fg, bg, fg, bg, bg};
+    int ok = 1;
+    for (int i = 0; i < 8; i++) {
+        if (row0[i] != expected[i]) ok = 0;
+    }
+    CHECK(ok, "extended background color mode: char code bits 6-7 should pick $D022 as this cell's background, foreground still the full color RAM nibble");
+}
+
+static void test_ecm_masks_character_code(void) {
+    Vic vic;
+    Memory mem;
+    vic_init(&vic);
+    memory_init(&mem);
+
+    vic_write(&vic, REG_D011, 0x50); /* DEN | ECM */
+    vic_write(&vic, REG_D018, 0x10); /* screen ptr -> $0400, char ptr -> $0000 */
+    vic_write(&vic, REG_D024, 3);    /* background color 3 = cyan - selected by top bits = 11 below */
+
+    /* Char code $C5: top bits 11 -> background color 3; low 6 bits
+     * (5) should be the ONLY part used to address character memory. */
+    mem.ram[0x0400] = 0xC5;
+    memset(&mem.ram[0xC5 * 8], 0xFF, 8); /* full (unmasked) char code's glyph slot: solid foreground - must NOT be used */
+    memset(&mem.ram[5 * 8], 0x00, 8);    /* masked (char_code & 0x3F) glyph slot: solid background - should be what actually renders */
+    vic_color_ram_write(&vic, 0, 1);     /* foreground = white, irrelevant since the glyph is all-background */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row0 = &pixels[VIC_BORDER_Y * VIC_CANVAS_W + VIC_BORDER_X];
+
+    int ok = 1;
+    for (int i = 0; i < 8; i++) {
+        if (row0[i] != 0x70A4B2) ok = 0; /* palette[3], cyan - background color 3 throughout */
+    }
+    CHECK(ok, "extended background color mode: only the low 6 bits of the character code should address character memory, not the full byte");
+}
+
+static void test_ecm_invalid_mode_combinations(void) {
+    Vic vic;
+    Memory mem;
+
+    vic_init(&vic);
+    memory_init(&mem);
+    vic_write(&vic, REG_D020, 2); /* border = red */
+    vic_write(&vic, REG_D011, 0x50); /* DEN | ECM */
+    vic_write(&vic, REG_D016, 0x10); /* MCM on too - invalid combination */
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t corner = pixels[0];
+    uint32_t center = pixels[(VIC_CANVAS_H / 2) * VIC_CANVAS_W + VIC_CANVAS_W / 2];
+    CHECK(corner == 0x68372B, "ECM+MCM invalid mode: border should still show the normal border color");
+    CHECK(center == 0x000000, "ECM+MCM invalid mode: the display window should render solid black, real VIC-II 'invalid mode' behavior");
+
+    vic_init(&vic);
+    memory_init(&mem);
+    vic_write(&vic, REG_D020, 2); /* border = red */
+    vic_write(&vic, REG_D011, 0x70); /* DEN | ECM | BMM - also invalid */
+    vic_write(&vic, REG_D016, 0x00); /* MCM off */
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    corner = pixels[0];
+    center = pixels[(VIC_CANVAS_H / 2) * VIC_CANVAS_W + VIC_CANVAS_W / 2];
+    CHECK(corner == 0x68372B, "ECM+BMM invalid mode: border should still show the normal border color");
+    CHECK(center == 0x000000, "ECM+BMM invalid mode: the display window should render solid black too");
 }
 
 static void test_standard_bitmap_mode(void) {
@@ -295,6 +383,9 @@ int main(void) {
     test_bad_lines();
     test_multicolor_text_mode();
     test_mcm_bit3_clear_stays_hires();
+    test_extended_background_color_mode();
+    test_ecm_masks_character_code();
+    test_ecm_invalid_mode_combinations();
     test_standard_bitmap_mode();
     test_multicolor_bitmap_mode();
     test_den_blanks_to_border();

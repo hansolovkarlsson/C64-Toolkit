@@ -5,18 +5,19 @@
 #include "memory.h"
 
 /* VIC-II (../ROADMAP.md steps 5-6): a free-running raster line
- * counter, 40x25 hi-res AND multicolor text mode (mixed per-cell, real
- * hardware "mode 3"), standard AND multicolor bitmap mode (see
- * vic_render_frame()'s header comment for both), a solid border/
- * background color (plus two extra multicolor-only background colors,
- * $D022/$D023), raster IRQs, and bad lines (the cycle-stealing DMA
- * quirk a lot of real software's raster-timed effects depend on - see
- * vic_take_badline_stall()'s header comment for exactly what's
- * modeled and what isn't). Rendering still happens once per whole
- * frame, not scanline-by-scanline, so there's no notion of mid-frame
- * raster EFFECTS yet even though the underlying timing (raster IRQs,
- * bad-line CPU stalls) is now real. Deliberately not implemented yet:
- * extended-background-color text mode, sprites, and light pen.
+ * counter, 40x25 hi-res AND multicolor AND extended-background-color
+ * text mode, standard AND multicolor bitmap mode (see
+ * vic_render_frame()'s header comment for all of these), a solid
+ * border/background color (plus three extra background-color
+ * registers, $D022-$D024, used by multicolor text mode and extended-
+ * background-color mode respectively), raster IRQs, and bad lines (the
+ * cycle-stealing DMA quirk a lot of real software's raster-timed
+ * effects depend on - see vic_take_badline_stall()'s header comment
+ * for exactly what's modeled and what isn't). Rendering still happens
+ * once per whole frame, not scanline-by-scanline, so there's no notion
+ * of mid-frame raster EFFECTS yet even though the underlying timing
+ * (raster IRQs, bad-line CPU stalls) is now real. Deliberately not
+ * implemented yet: sprites and light pen.
  *
  * PAL timing: 63 cycles/line, 312 lines/frame (see PAL_CYCLES_PER_LINE/
  * PAL_LINES_PER_FRAME) - matches gtk/main.c's own PAL frame-cycle
@@ -134,13 +135,19 @@ uint32_t vic_take_badline_stall(Vic *vic);
  * PIXELS by `stride` so a caller can wrap a cairo (or similar) surface
  * with its own alignment padding without a reformatting pass).
  *
- * Two independent mode axes, both read from $D011/$D016 fresh each
- * frame: BMM ($D011 bit5) picks bitmap mode over text mode; MCM
- * ($D016 bit4) picks multicolor pixel encoding over plain hi-res
- * within whichever of those two is active. Text+bitmap use completely
- * different memory layouts (see below) so they're handled as two
- * separate rendering paths; hi-res vs multicolor is the same pixel
- * encoding either way and shares one helper, render_cell() in vic.c.
+ * Three mode bits, all read from $D011/$D016 fresh each frame: BMM
+ * ($D011 bit5) picks bitmap mode over text mode; MCM ($D016 bit4)
+ * picks multicolor pixel encoding over plain hi-res within whichever
+ * of those two is active; ECM ($D011 bit6) - text mode only - picks
+ * extended background color mode. Not every combination is valid on
+ * real hardware: ECM combined with MCM and/or BMM is a documented
+ * "invalid mode" that renders the whole display window (not the
+ * border) solid black rather than any meaningful pixel data - checked
+ * first, before either mode's own rendering path runs. Text+bitmap use
+ * completely different memory layouts (see below) so they're handled
+ * as two separate rendering paths; hi-res vs multicolor is the same
+ * pixel encoding either way and shares one helper, render_cell() in
+ * vic.c.
  *
  * TEXT MODE (BMM=0): screen RAM holds a character code per cell,
  * looked up in character ROM/RAM for the actual pixel data (see the
@@ -153,6 +160,13 @@ uint32_t vic_take_badline_stall(Vic *vic);
  * color 0/1/2 - $D021/$D022/$D023 - or color RAM bits 0-2 as the 4th
  * color). When MCM is off entirely, every cell is plain hi-res using
  * the full 4-bit color RAM value, same as before bitmap mode existed.
+ * When ECM is set instead (valid only with MCM off): the character
+ * code's top 2 bits pick one of 4 background colors ($D021-$D024) for
+ * that cell rather than contributing to which glyph is shown - only
+ * the low 6 bits of the character code address character memory, so
+ * only 64 of the normal 256 characters are reachable in this mode,
+ * again real hardware behavior. Foreground still comes from the full
+ * 4-bit color RAM value, same as plain hi-res.
  *
  * BITMAP MODE (BMM=1): screen RAM instead holds per-CELL color info
  * directly (no character-code indirection, and no character ROM
