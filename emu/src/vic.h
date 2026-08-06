@@ -6,8 +6,8 @@
 
 /* VIC-II (../ROADMAP.md steps 5-6): a free-running raster line
  * counter, 40x25 hi-res AND multicolor AND extended-background-color
- * text mode, standard AND multicolor bitmap mode (see
- * vic_render_frame()'s header comment for all of these), a solid
+ * text mode, standard AND multicolor bitmap mode, 8 hardware sprites
+ * (see vic_render_frame()'s header comment for all of these), a solid
  * border/background color (plus three extra background-color
  * registers, $D022-$D024, used by multicolor text mode and extended-
  * background-color mode respectively), raster IRQs, and bad lines (the
@@ -17,7 +17,7 @@
  * once per whole frame, not scanline-by-scanline, so there's no notion
  * of mid-frame raster EFFECTS yet even though the underlying timing
  * (raster IRQs, bad-line CPU stalls) is now real. Deliberately not
- * implemented yet: sprites and light pen.
+ * implemented yet: light pen.
  *
  * PAL timing: 63 cycles/line, 312 lines/frame (see PAL_CYCLES_PER_LINE/
  * PAL_LINES_PER_FRAME) - matches gtk/main.c's own PAL frame-cycle
@@ -60,11 +60,17 @@ void vic_init(Vic *vic);
  * the LIVE raster position (MSB/low byte respectively); WRITING them
  * sets `raster_compare` instead (same bit split) - real hardware reuses
  * the same two register addresses for both purposes, it isn't a bug or
- * an approximation. $D019 (bits 0-3 pending, bit7 read-only summary)
- * and $D01A (bits 0-3 enable) are real too - see vic_irq_line().
- * Writing to $D019 CLEARS whichever of bits 0-3 are 1 in the value
- * written (matching real hardware's write-1-to-clear semantics), it
- * does not assign the byte directly.
+ * an approximation. $D019 (bits 0-3 pending: bit0=raster, bit1=sprite-
+ * background collision, bit2=sprite-sprite collision, bit3=light pen
+ * [never set, not modeled] - plus bit7 read-only summary) and $D01A
+ * (bits 0-3 enable) are real too - see vic_irq_line(). Writing to
+ * $D019 CLEARS whichever of bits 0-3 are 1 in the value written
+ * (matching real hardware's write-1-to-clear semantics), it does not
+ * assign the byte directly. $D01E (sprite-sprite collision) and $D01F
+ * (sprite-background collision) are real too, but simpler: reading
+ * EITHER one returns its latched bits and clears the WHOLE register,
+ * no write-1-to-clear or mask involved - see vic_render_frame()'s
+ * header comment for how those bits get set.
  *
  * Every other register just reads back what was last written. */
 uint8_t vic_read(Vic *vic, uint8_t reg);
@@ -203,7 +209,34 @@ uint32_t vic_take_badline_stall(Vic *vic);
  * from CIA2 PRA bits 0-1 by the caller (machine.c), not read from CIA2
  * here, so this file stays free of any C64-specific-wiring knowledge
  * beyond the VIC chip itself (mirrors how cia.c doesn't know about the
- * keyboard matrix either - that's machine.c's job in both cases). */
+ * keyboard matrix either - that's machine.c's job in both cases).
+ *
+ * SPRITES: drawn on top of whichever of the above ran, in two passes -
+ * see vic.c's own comment directly above the code for the exact
+ * algorithm. $D000-$D00F hold X/Y pairs for sprites 0-7 (X is 9 bits,
+ * MSBs in $D010); $D015 enables each sprite; $D017/$D01D double a
+ * sprite's height/width (each source pixel drawn 2x); $D01C picks
+ * multicolor per sprite. A sprite is 24x21 pixels unexpanded, 3
+ * contiguous data bytes (24 bits) per row, 21 rows, pointed to by
+ * `screen_base + 0x3F8 + n` (the LAST 8 bytes of the current video
+ * matrix - real hardware convention, not incidental) times 64. Hi-res
+ * sprite pixels: 1 bit -> opaque (that sprite's own color, $D027-
+ * $D02E) or transparent. Multicolor sprite pixels: 2-bit pairs -> '00'
+ * transparent, '01'/'11' the two SHARED multicolor registers ($D025/
+ * $D026, same for every multicolor sprite), '10' that sprite's own
+ * color - a different palette shape than multicolor text/bitmap modes.
+ * $D01B picks, per sprite, whether it's always drawn on top (0) or
+ * hidden specifically behind graphics FOREGROUND pixels while still
+ * covering the background (1) - real sprite-to-graphics priority, not
+ * sprite-to-sprite (sprites among themselves are simple draw order,
+ * sprite 0 highest). $D01E/$D01F latch sprite-sprite and sprite-
+ * background collisions respectively (bit n = sprite n was involved),
+ * detected once per frame during this same rendering pass rather than
+ * continuously - see vic_read()'s header comment for how they clear.
+ * Sprite X/Y=24/50 lands a sprite's top-left pixel at this canvas's own
+ * top-left corner - a widely-cited real-hardware landmark, matching
+ * the same spirit as VIC_BORDER_X/Y's own approximation, not
+ * independently re-derived. */
 void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixels, int stride);
 
 #endif

@@ -24,13 +24,13 @@ newer and was scaffolded directly in this repo (no subtree history).
   (cycle-stepped 6502/6510 CPU, memory/bank-switching, both CIAs
   including real keyboard/joystick wiring, VIC-II [40x25 hi-res,
   multicolor, AND extended-background-color text mode, standard AND
-  multicolor bitmap mode, border/background color, raster IRQs, bad
-  lines], a GTK4 shell, eventually
+  multicolor bitmap mode, all 8 hardware sprites, border/background
+  color, raster IRQs, bad lines], a GTK4 shell, eventually
   SID). Does not share code with `asm/`'s `mini6502.py` test harness —
   see "`c64emu` (`emu/`)" below for why they're deliberately separate.
   **Boots real system software**: tested against the MEGA65 `open-roms`
   open-source ROM replacement, it runs unmodified to a readable BASIC
-  `READY.` prompt. Still no sound, no sprites.
+  `READY.` prompt. Still no sound.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
@@ -299,8 +299,8 @@ memory/bank-switching -> GTK4 shell -> CIA 1/2 -> VIC-II first pass
 tested against the MEGA65 `open-roms` open-source ROM replacement, it
 runs unmodified to a readable BASIC `READY.` prompt) -> VIC-II second
 pass (raster IRQs, bad lines, multicolor text mode, both bitmap
-sub-modes, and extended-background-color mode done; sprites not
-started) -> SID. PAL timing only; cartridge and 1541 disk-drive emulation are
+sub-modes, extended-background-color mode, and sprites done; light pen
+not started) -> SID. PAL timing only; cartridge and 1541 disk-drive emulation are
 explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
@@ -441,16 +441,51 @@ explicitly out of scope for now.
   code address character memory — so only 64 of the normal 256
   characters are reachable, real hardware behavior. Foreground still
   comes from the full 4-bit color RAM value, same as plain hi-res text.
-  Deliberately still deferred: sprites, light pen — rendering still
-  happens once per whole frame, not scanline by scanline, so a raster
-  IRQ handler that pokes `$D020`/`$D021` mid-frame for a split-screen
-  effect still won't show up in the picture, even though bad lines now
-  stall the CPU correctly and raster IRQs fire at the right line.
-  Verified against hand-derived expectations, including that a
-  multicolor cell's fallback to plain hi-res (bit3=0) genuinely takes
-  that code path rather than just happening to render the same pixels,
-  both bitmap sub-modes, ECM's background-color selection and character-
-  code masking, and both ECM invalid-mode combinations (`tests/vic/`,
+  **Sprites**: all 8 hardware sprites, composited on top of whatever
+  text/bitmap rendering produced, in two passes at the end of
+  `vic_render_frame()` (see the algorithm comment directly above that
+  code in `vic.c`). Position (`$D000`-`$D00F` X/Y pairs plus `$D010`'s
+  X MSBs), enable (`$D015`), Y/X expansion (`$D017`/`$D01D` — each
+  source pixel drawn 2x), and per-sprite multicolor (`$D01C`) are all
+  real. A sprite is 24x21 pixels unexpanded: 3 contiguous data bytes
+  (24 bits) per row, 21 rows, pointed to by the LAST 8 bytes of the
+  current video matrix (`screen_base+0x3F8+n`, a real hardware
+  convention reused here, not incidental) times 64. Hi-res sprite
+  pixels are opaque (that sprite's own color, `$D027`-`$D02E`) or
+  transparent; multicolor sprite pixels use a DIFFERENT palette shape
+  than multicolor text/bitmap modes — '01'/'11' are the two SHARED
+  multicolor registers (`$D025`/`$D026`, same for every multicolor
+  sprite), '10' is that sprite's own color, '00' always transparent.
+  Sprite-to-graphics priority (`$D01B`) reuses a new per-pixel
+  "graphics foreground" mask — `render_cell()` now stamps this
+  alongside color at essentially no extra cost, since the same
+  hi-res-bit/multicolor-pair-nonzero test it already computes IS the
+  real VIC-II definition of "foreground" — so a sprite can be hidden
+  specifically behind graphics foreground pixels while staying in
+  front of the background, not a text-only fg/bg model repurposed.
+  Sprite-to-sprite priority is just draw order (sprite 0 highest,
+  drawn last, so it wins ties). Sprite-sprite and sprite-background
+  collision (`$D01E`/`$D01F`) are detected once per frame in the same
+  pass — not continuously, since rendering itself isn't scanline-by-
+  scanline yet — OR'd into their registers rather than overwritten
+  (only an explicit READ clears either one, a real hardware detail
+  different from `$D019`'s write-1-to-clear), and feed `$D019` bits
+  1/2 the same way raster IRQs already fed bit 0. Deliberately still
+  deferred: light pen — rendering still happens once per whole frame,
+  not scanline by scanline, so a raster IRQ handler that pokes
+  `$D020`/`$D021` mid-frame for a split-screen effect still won't show
+  up in the picture, even though bad lines now stall the CPU correctly
+  and raster IRQs fire at the right line. Verified against hand-derived
+  expectations, including that a multicolor cell's fallback to plain
+  hi-res (bit3=0) genuinely takes that code path rather than just
+  happening to render the same pixels, both bitmap sub-modes, ECM's
+  background-color selection and character-code masking, both ECM
+  invalid-mode combinations, sprite shape/position, disabled sprites
+  genuinely not rendering, multicolor sprites' distinct palette shape,
+  X/Y expansion actually doubling source pixels, both directions of
+  `$D01B` priority within a single render, sprite-vs-sprite draw
+  order, and both collision registers including their read-clears-
+  but-`$D019`-needs-its-own-clear distinction (`tests/vic/`,
   `tests/machine/`), and, together with the CPU/memory/CIA modules it
   depends on, against real system software actually booting
   (`tests/boot/` — see below).

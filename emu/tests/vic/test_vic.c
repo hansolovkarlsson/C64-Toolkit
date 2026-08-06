@@ -20,7 +20,25 @@ enum {
     REG_D011 = 0x11, REG_D012 = 0x12, REG_D016 = 0x16, REG_D018 = 0x18,
     REG_D019 = 0x19, REG_D01A = 0x1A, REG_D020 = 0x20, REG_D021 = 0x21,
     REG_D022 = 0x22, REG_D023 = 0x23, REG_D024 = 0x24,
+    REG_D010 = 0x10, REG_D015 = 0x15, REG_D017 = 0x17, REG_D01B = 0x1B,
+    REG_D01C = 0x1C, REG_D01D = 0x1D, REG_D01E = 0x1E, REG_D01F = 0x1F,
+    REG_D025 = 0x25, REG_D026 = 0x26, REG_D027 = 0x27,
 };
+
+/* Every sprite test starts from the same baseline: DEN on, a blank
+ * (all char-code-0, all-zero-glyph) text screen at $0400/$0000 so the
+ * whole display window reads as background/fgmask=0 unless a test
+ * deliberately draws into it, and sprite 0's data pointer set up at
+ * $0800 (pointer byte 32 at $07F8, the video matrix's own last-8-bytes
+ * convention) so tests only need to fill in $0800's 63 data bytes and
+ * position/attribute registers, not repeat this plumbing every time. */
+static void sprite_test_baseline(Vic *vic, Memory *mem) {
+    vic_init(vic);
+    memory_init(mem);
+    vic_write(vic, REG_D011, 0x10); /* DEN, everything else off */
+    vic_write(vic, REG_D018, 0x10); /* screen ptr -> $0400, char ptr -> $0000 */
+    mem->ram[0x07F8] = 32; /* sprite 0's pointer byte: data at bank+32*64 = $0800 */
+}
 
 static void test_raster_counter(void) {
     Vic vic;
@@ -296,6 +314,218 @@ static void test_multicolor_bitmap_mode(void) {
     CHECK(row0[6] == 0x70A4B2 && row0[7] == 0x70A4B2, "multicolor bitmap: pixel-pair '11' should render color RAM's low nibble, 2 pixels wide");
 }
 
+static void test_sprite_hires_position_and_shape(void) {
+    Vic vic;
+    Memory mem;
+    sprite_test_baseline(&vic, &mem);
+
+    /* Row 0: 0xFF, 0x00, 0xFF - opaque, transparent, opaque, 8 pixels each. */
+    mem.ram[0x0800] = 0xFF;
+    mem.ram[0x0801] = 0x00;
+    mem.ram[0x0802] = 0xFF;
+
+    vic_write(&vic, 0x00, 24); /* sprite 0 X low byte = 24 -> canvas x=0 (VIC_SPRITE_X_OFFSET) */
+    vic_write(&vic, 0x01, 50); /* sprite 0 Y = 50 -> canvas y=0 (VIC_SPRITE_Y_OFFSET) */
+    vic_write(&vic, REG_D015, 0x01); /* enable sprite 0 */
+    vic_write(&vic, REG_D027, 2);    /* sprite 0 color = red */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row0 = &pixels[0];
+
+    uint32_t red = 0x68372B, black = 0x000000;
+    for (int i = 0; i < 8; i++) CHECK(row0[i] == red, "sprite hi-res: first byte's 8 bits should render opaque in the sprite's own color");
+    for (int i = 8; i < 16; i++) CHECK(row0[i] == black, "sprite hi-res: second (all-clear) byte should be transparent, showing the border color underneath");
+    for (int i = 16; i < 24; i++) CHECK(row0[i] == red, "sprite hi-res: third byte should render opaque again");
+    CHECK(pixels[24] == black, "sprite hi-res: pixel 24 is past the 24-pixel-wide sprite and should show the plain border color");
+}
+
+static void test_sprite_disabled_does_not_render(void) {
+    Vic vic;
+    Memory mem;
+    sprite_test_baseline(&vic, &mem);
+
+    mem.ram[0x0800] = 0xFF; /* fully opaque row, same position as the enabled test above */
+    vic_write(&vic, 0x00, 24);
+    vic_write(&vic, 0x01, 50);
+    vic_write(&vic, REG_D027, 2);
+    /* $D015 left at 0 - sprite 0 never enabled. */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    CHECK(pixels[0] == 0x000000, "disabled sprite: should not render at all, even with valid position/pointer/data");
+}
+
+static void test_sprite_multicolor(void) {
+    Vic vic;
+    Memory mem;
+    sprite_test_baseline(&vic, &mem);
+
+    /* Same 00/01/10/11 repeating pattern used for multicolor text/bitmap tests. */
+    mem.ram[0x0800] = 0x1B;
+    mem.ram[0x0801] = 0x1B;
+    mem.ram[0x0802] = 0x1B;
+
+    vic_write(&vic, 0x00, 24);
+    vic_write(&vic, 0x01, 50);
+    vic_write(&vic, REG_D015, 0x01);
+    vic_write(&vic, REG_D01C, 0x01); /* multicolor sprite 0 */
+    vic_write(&vic, REG_D025, 1);    /* shared multicolor 0 = white - the '01' pair color */
+    vic_write(&vic, REG_D026, 5);    /* shared multicolor 1 = green - the '11' pair color */
+    vic_write(&vic, REG_D027, 3);    /* sprite 0's own color = cyan - the '10' pair color */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row0 = &pixels[0];
+
+    CHECK(row0[0] == 0x000000 && row0[1] == 0x000000, "sprite multicolor: pixel-pair '00' should stay transparent (border shows through), 2 pixels wide");
+    CHECK(row0[2] == 0xFFFFFF && row0[3] == 0xFFFFFF, "sprite multicolor: pixel-pair '01' should render shared multicolor 0 ($D025), 2 pixels wide");
+    CHECK(row0[4] == 0x70A4B2 && row0[5] == 0x70A4B2, "sprite multicolor: pixel-pair '10' should render the sprite's OWN color, 2 pixels wide");
+    CHECK(row0[6] == 0x588D43 && row0[7] == 0x588D43, "sprite multicolor: pixel-pair '11' should render shared multicolor 1 ($D026), 2 pixels wide");
+}
+
+static void test_sprite_x_and_y_expand(void) {
+    Vic vic;
+    Memory mem;
+    sprite_test_baseline(&vic, &mem);
+
+    mem.ram[0x0800] = 0x80; /* source row 0: only the first pixel opaque */
+    mem.ram[0x0801] = 0x00;
+    mem.ram[0x0802] = 0x00;
+    mem.ram[0x0803] = 0x00; /* source row 1: fully transparent */
+    mem.ram[0x0804] = 0x00;
+    mem.ram[0x0805] = 0x00;
+
+    vic_write(&vic, 0x00, 24);
+    vic_write(&vic, 0x01, 50);
+    vic_write(&vic, REG_D015, 0x01);
+    vic_write(&vic, REG_D01D, 0x01); /* X-expand sprite 0 */
+    vic_write(&vic, REG_D017, 0x01); /* Y-expand sprite 0 */
+    vic_write(&vic, REG_D027, 2);    /* red */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+
+    uint32_t red = 0x68372B, black = 0x000000;
+    CHECK(pixels[0] == red && pixels[1] == red, "sprite X-expand: the one opaque source pixel should render 2 real pixels wide");
+    CHECK(pixels[2] == black, "sprite X-expand: past the doubled pixel should be transparent again");
+    CHECK(pixels[VIC_CANVAS_W] == red && pixels[VIC_CANVAS_W + 1] == red,
+          "sprite Y-expand: canvas row 1 should repeat source row 0's data, not move on to source row 1");
+    CHECK(pixels[2 * VIC_CANVAS_W] == black,
+          "sprite Y-expand: canvas row 2 should show source row 1 (all transparent), proving the Y mapping actually advances");
+}
+
+static void test_sprite_priority_vs_graphics(void) {
+    Vic vic;
+    Memory mem;
+    sprite_test_baseline(&vic, &mem);
+
+    /* Cell (0,0) (canvas x32-39) renders solid foreground; cells (0,1)
+     * and (0,2) (x40-55) stay background - so a 24px-wide sprite
+     * starting at x32 spans one foreground cell and two background
+     * ones, letting a single render prove both halves of $D01B's
+     * per-pixel behavior at once. */
+    mem.ram[0x0400] = 0; /* cell (0,0): char code 0 */
+    for (int i = 0; i < 8; i++) mem.ram[0x0000 + i] = 0xFF; /* glyph 0: solid */
+    vic_color_ram_write(&vic, 0, 1); /* white foreground */
+    /* cells (0,1)/(0,2) already char code 0 too, but a DIFFERENT glyph
+     * (code 1) kept all-zero (background) - point them at glyph 1. */
+    mem.ram[0x0401] = 1;
+    mem.ram[0x0402] = 1;
+
+    mem.ram[0x0800] = 0xFF; mem.ram[0x0801] = 0xFF; mem.ram[0x0802] = 0xFF; /* fully opaque sprite row */
+    vic_write(&vic, 0x00, 24 + 32); /* canvas x = 32, the start of cell (0,0) */
+    vic_write(&vic, 0x01, 50 + 35); /* canvas y = 35, cell row 0 */
+    vic_write(&vic, REG_D015, 0x01);
+    vic_write(&vic, REG_D027, 2); /* sprite color = red */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    uint32_t white = 0xFFFFFF, red = 0x68372B;
+
+    vic_write(&vic, REG_D01B, 0x00); /* priority: always in front */
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row = &pixels[VIC_BORDER_Y * VIC_CANVAS_W + VIC_BORDER_X];
+    for (int i = 0; i < 24; i++) CHECK(row[i] == red, "sprite priority (front): should cover graphics foreground AND background alike");
+
+    vic_write(&vic, REG_D01B, 0x01); /* priority: behind graphics foreground */
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    row = &pixels[VIC_BORDER_Y * VIC_CANVAS_W + VIC_BORDER_X];
+    for (int i = 0; i < 8; i++) CHECK(row[i] == white, "sprite priority (behind): graphics foreground pixels should win over the sprite here");
+    for (int i = 8; i < 24; i++) CHECK(row[i] == red, "sprite priority (behind): graphics BACKGROUND pixels should still lose to the sprite");
+}
+
+static void test_sprite_vs_sprite_priority(void) {
+    Vic vic;
+    Memory mem;
+    sprite_test_baseline(&vic, &mem);
+
+    mem.ram[0x0800] = 0xFF; mem.ram[0x0801] = 0xFF; mem.ram[0x0802] = 0xFF; /* sprite 0's data */
+    mem.ram[0x07F9] = 33; /* sprite 1's pointer -> data at $0840 */
+    mem.ram[0x0840] = 0xFF; mem.ram[0x0841] = 0xFF; mem.ram[0x0842] = 0xFF; /* sprite 1's data, identical footprint */
+
+    vic_write(&vic, 0x00, 24); vic_write(&vic, 0x01, 50); /* sprite 0 at canvas (0,0) */
+    vic_write(&vic, 0x02, 24); vic_write(&vic, 0x03, 50); /* sprite 1 at the SAME position */
+    vic_write(&vic, REG_D015, 0x03); /* enable both */
+    vic_write(&vic, REG_D027, 2);     /* sprite 0 = red */
+    vic_write(&vic, REG_D027 + 1, 5); /* sprite 1 = green */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    CHECK(pixels[0] == 0x68372B, "sprite-vs-sprite priority: lower-numbered sprite 0 should win over sprite 1 wherever both are opaque");
+}
+
+static void test_sprite_sprite_collision(void) {
+    Vic vic;
+    Memory mem;
+    sprite_test_baseline(&vic, &mem);
+
+    mem.ram[0x0800] = 0xFF; mem.ram[0x0801] = 0x00; mem.ram[0x0802] = 0x00;
+    mem.ram[0x07F9] = 33;
+    mem.ram[0x0840] = 0xFF; mem.ram[0x0841] = 0x00; mem.ram[0x0842] = 0x00; /* sprite 1: same first byte, so pixels 0-7 overlap sprite 0's */
+
+    vic_write(&vic, 0x00, 24); vic_write(&vic, 0x01, 50);
+    vic_write(&vic, 0x02, 24); vic_write(&vic, 0x03, 50); /* fully overlapping */
+    vic_write(&vic, REG_D015, 0x03);
+    vic_write(&vic, REG_D027, 2);
+    vic_write(&vic, REG_D027 + 1, 5);
+    vic_write(&vic, REG_D01A, 0x04); /* unmask sprite-sprite collision IRQ, so we can check it fires too */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+
+    CHECK(vic_irq_line(&vic) != 0, "sprite-sprite collision: should have raised an IRQ (unmasked, $D019 bit2)");
+    uint8_t collided = vic_read(&vic, REG_D01E);
+    CHECK(collided == 0x03, "sprite-sprite collision: $D01E should have both sprites' bits set");
+    CHECK(vic_read(&vic, REG_D01E) == 0, "sprite-sprite collision: reading $D01E should clear it");
+    CHECK(vic_irq_line(&vic) != 0, "sprite-sprite collision: reading $D01E must NOT itself clear $D019's pending bit - only an explicit write-1 to $D019 does");
+    vic_write(&vic, REG_D019, 0x04);
+    CHECK(vic_irq_line(&vic) == 0, "sprite-sprite collision: write-1 to $D019 bit2 should finally drop the IRQ");
+}
+
+static void test_sprite_background_collision(void) {
+    Vic vic;
+    Memory mem;
+    sprite_test_baseline(&vic, &mem);
+
+    mem.ram[0x0400] = 0;
+    for (int i = 0; i < 8; i++) mem.ram[0x0000 + i] = 0xFF; /* cell (0,0): solid foreground */
+    vic_color_ram_write(&vic, 0, 1);
+
+    mem.ram[0x0800] = 0xFF; mem.ram[0x0801] = 0x00; mem.ram[0x0802] = 0x00;
+    vic_write(&vic, 0x00, 24 + 32); /* land sprite 0 right on cell (0,0) */
+    vic_write(&vic, 0x01, 50 + 35);
+    vic_write(&vic, REG_D015, 0x01);
+    vic_write(&vic, REG_D027, 2);
+    vic_write(&vic, REG_D01B, 0x00); /* priority irrelevant to collision detection - front, so it's also visibly there */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+
+    uint8_t collided = vic_read(&vic, REG_D01F);
+    CHECK(collided == 0x01, "sprite-background collision: $D01F should have sprite 0's bit set after overlapping a graphics foreground pixel");
+    CHECK(vic_read(&vic, REG_D01F) == 0, "sprite-background collision: reading $D01F should clear it");
+}
+
 static void test_den_blanks_to_border(void) {
     Vic vic;
     Memory mem;
@@ -388,6 +618,14 @@ int main(void) {
     test_ecm_invalid_mode_combinations();
     test_standard_bitmap_mode();
     test_multicolor_bitmap_mode();
+    test_sprite_hires_position_and_shape();
+    test_sprite_disabled_does_not_render();
+    test_sprite_multicolor();
+    test_sprite_x_and_y_expand();
+    test_sprite_priority_vs_graphics();
+    test_sprite_vs_sprite_priority();
+    test_sprite_sprite_collision();
+    test_sprite_background_collision();
     test_den_blanks_to_border();
     test_text_rendering_from_ram();
     test_char_rom_visibility_quirk();

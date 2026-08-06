@@ -16,24 +16,27 @@ keyboard-matrix/joystick/IRQ-NMI wiring on top of it - real keyboard
 input reaches the machine, typing in the window feeds CIA1's keyboard
 matrix), and VIC-II (`src/vic.c` - real 40x25 hi-res, multicolor, AND
 extended-background-color text mode, PLUS standard AND multicolor
-bitmap mode, through screen RAM/character ROM/color RAM and whichever
-bank CIA2 selects, a solid border/background color [plus three extra
-background-color registers used by multicolor and extended-background-
-color mode], real raster IRQs [CIA1 and VIC-II share the CPU's /IRQ
-line, matching real hardware], and bad lines [the cycle-stealing DMA
-quirk - the CPU genuinely stalls for `VIC_BADLINE_STALL_CYCLES` when
-one is entered]). **This is enough to actually boot**: `tests/boot/` is
-an automated end-to-end gate that fetches a real open-source ROM
-replacement (the MEGA65 `open-roms` project) and checks that the whole
-machine runs it unmodified all the way to a readable BASIC `READY.`
-prompt - the one test that exercises the CPU, memory map, both CIAs,
-and VIC-II together, not just each module in isolation. See
+bitmap mode, PLUS all 8 hardware sprites [position/enable/expansion/
+multicolor, sprite-to-graphics and sprite-to-sprite priority, sprite-
+sprite and sprite-background collision detection], through screen
+RAM/character ROM/color RAM and whichever bank CIA2 selects, a solid
+border/background color [plus three extra background-color registers
+used by multicolor and extended-background-color mode], real raster
+IRQs [CIA1 and VIC-II share the CPU's /IRQ line, matching real
+hardware], and bad lines [the cycle-stealing DMA quirk - the CPU
+genuinely stalls for `VIC_BADLINE_STALL_CYCLES` when one is entered]).
+**This is enough to actually boot**: `tests/boot/` is an automated
+end-to-end gate that fetches a real open-source ROM replacement (the
+MEGA65 `open-roms` project) and checks that the whole machine runs it
+unmodified all the way to a readable BASIC `READY.` prompt - the one
+test that exercises the CPU, memory map, both CIAs, and VIC-II
+together, not just each module in isolation. See
 `tests/cpu/README.md`, `tests/memory/README.md`, `tests/cia/README.md`,
 `tests/machine/README.md`, `tests/vic/README.md`, `tests/boot/README.md`,
 and this file's "Building" section below. No SID yet (no sound); no
-sprites or light pen yet either (see `vic.h`'s header comment for the
-full list of what's still deferred); no joystick wiring in the GTK
-shell yet even though `machine_set_joystick()` exists. See
+light pen yet either (see `vic.h`'s header comment for the full list of
+what's still deferred); no joystick wiring in the GTK shell yet even
+though `machine_set_joystick()` exists. See
 [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
@@ -84,9 +87,9 @@ make clean
 The window drives the machine at ~50 Hz (PAL frame rate) and shows
 real VIC-II output - see `vic.h`'s header comment for exactly what's
 modeled (40x25 hi-res, multicolor, and extended-background-color text
-mode, standard and multicolor bitmap mode, border/background color,
-DEN blanking, raster IRQs, bad lines) versus deliberately deferred
-(sprites). It runs fine with no ROMs loaded (the CPU just
+mode, standard and multicolor bitmap mode, all 8 hardware sprites,
+border/background color, DEN blanking, raster IRQs, bad lines) versus
+deliberately deferred (light pen). It runs fine with no ROMs loaded (the CPU just
 executes a harmless BRK loop on zeroed memory, and the screen stays
 whatever color `$D021`/`$D020` default to), which is enough to see the
 window/event loop working before real ROMs are available - but with

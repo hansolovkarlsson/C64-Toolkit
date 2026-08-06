@@ -210,15 +210,54 @@ each piece will live.
      color selection, that the character-code masking is genuinely
      applied (a glyph placed at the unmasked address must NOT render),
      and both invalid-mode combinations (`tests/vic/`).
-   - Sprites and light pen - not
-     started. Also where real border geometry (currently a fixed,
-     plausible-looking approximation - see `vic.h`) and scanline-by-
-     scanline rendering (instead of one whole frame per
-     `vic_render_frame()` call) would need to land, if either turns out
-     to matter for real software being tested against - bad lines now
-     stall the CPU correctly, but a raster IRQ handler that pokes
-     `$D020`/`$D021` mid-frame for a split-screen effect still won't
-     show up in the picture, since rendering itself is still
+   - ~~Sprites~~ - done: all 8 hardware sprites, composited on top of
+     whatever text/bitmap rendering produced, in two passes inside
+     `vic_render_frame()` (see its header comment in `vic.h` and the
+     algorithm comment directly above the code in `vic.c` for the
+     full detail). Position (`$D000`-`$D00F` X/Y pairs, `$D010` X
+     MSBs), enable (`$D015`), Y/X expansion (`$D017`/`$D01D`, each
+     source pixel drawn 2x), and per-sprite multicolor (`$D01C`) are
+     all real. Hi-res sprite pixels are opaque/transparent against that
+     sprite's own color (`$D027`-`$D02E`); multicolor sprite pixels use
+     a different palette shape than multicolor text/bitmap modes -
+     '01'/'11' are the two SHARED multicolor registers (`$D025`/
+     `$D026`, same for every multicolor sprite), '10' is that sprite's
+     own color, '00' always transparent. Sprite data is pointed to by
+     the LAST 8 bytes of the current video matrix (`screen_base+0x3F8`
+     onward) times 64 - a real hardware convention reused here, not
+     incidental. Sprite-to-graphics priority (`$D01B`) reuses a new
+     per-pixel "graphics foreground" mask (`render_cell()` now stamps
+     this alongside color, at essentially no extra cost, since the
+     same hi-res-bit/multicolor-pair-nonzero test already existed) so
+     a sprite can be hidden specifically behind graphics FOREGROUND
+     pixels while staying in front of the background - real VIC-II
+     semantics, not a text-only fg/bg model repurposed. Sprite-to-
+     sprite priority is just draw order (sprite 0 highest, drawn
+     last). Sprite-sprite and sprite-background collision (`$D01E`/
+     `$D01F`) are detected once per frame in the same pass (not
+     continuously, since rendering itself isn't scanline-by-scanline
+     yet), OR'd into their registers rather than overwritten (since
+     only an explicit read clears them - a real hardware detail
+     different from `$D019`'s write-1-to-clear), and feed `$D019`
+     bits 1/2 the same way raster IRQs feed bit 0. Verified against
+     hand-derived expectations for shape/position, disabled sprites
+     genuinely not rendering, multicolor's distinct palette shape,
+     X/Y expansion actually doubling source pixels rather than just
+     scaling coordinates, both directions of `$D01B` priority in a
+     single render (one sprite spanning both a foreground and a
+     background graphics cell), sprite-vs-sprite draw order, and both
+     collision registers including their read-clears-but-`$D019`-
+     needs-its-own-clear distinction (`tests/vic/`), plus the existing
+     full regression suite including `tests/boot/`, since sprites are
+     inert until a register enables them.
+   - Light pen - not started. Also where real border geometry
+     (currently a fixed, plausible-looking approximation - see
+     `vic.h`) and scanline-by-scanline rendering (instead of one whole
+     frame per `vic_render_frame()` call) would need to land, if either
+     turns out to matter for real software being tested against - bad
+     lines now stall the CPU correctly, but a raster IRQ handler that
+     pokes `$D020`/`$D021` mid-frame for a split-screen effect still
+     won't show up in the picture, since rendering itself is still
      once-per-frame.
 7. **SID** - the 3-voice synth (square/triangle/sawtooth/noise
    generators, ADSR envelopes) without exact analog filter modeling
