@@ -157,16 +157,30 @@ each piece will live.
      expectations, including that DEN=0 and lines outside the window
      correctly suppress it (`tests/vic/`), and that the CPU's PC/cycle
      count genuinely don't advance during a stall call (`tests/machine/`).
-   - Multicolor and extended-background-color text modes, bitmap
-     modes, sprites, and light pen - not started. Also where real
-     border geometry (currently a fixed, plausible-looking
-     approximation - see `vic.h`) and scanline-by-scanline rendering
-     (instead of one whole frame per `vic_render_frame()` call) would
-     need to land, if either turns out to matter for real software
-     being tested against - bad lines now stall the CPU correctly, but
-     a raster IRQ handler that pokes `$D020`/`$D021` mid-frame for a
-     split-screen effect still won't show up in the picture, since
-     rendering itself is still once-per-frame.
+   - ~~Multicolor text mode~~ - done: MCM (`$D016` bit4) turns text mode
+     "mixed" per real hardware behavior - color RAM's bit3 becomes a
+     PER-CELL mode flag instead of part of the color. A cell with
+     bit3=0 still renders plain hi-res, masked to color RAM bits 0-2
+     (colors 0-7 only - bit3 no longer means what it does with MCM
+     off); a cell with bit3=1 renders as true 4-color multicolor
+     instead (background color 0/1/2 - `$D021`/`$D022`/`$D023`,
+     the latter two new registers - or color RAM bits 0-2 as the 4th
+     color), each of the 4 possible 2-bit pixel-pair values covering 2
+     real pixels instead of 1, so multicolor cells render at half the
+     horizontal resolution of hi-res ones. Verified against hand-derived
+     expectations for all 4 pixel-pair values and for the bit3=0
+     fallback genuinely taking the hi-res code path, not just happening
+     to produce the same pixels (`tests/vic/`).
+   - Extended-background-color text mode, bitmap modes, sprites, and
+     light pen - not started. Also where real border geometry
+     (currently a fixed, plausible-looking approximation - see
+     `vic.h`) and scanline-by-scanline rendering (instead of one whole
+     frame per `vic_render_frame()` call) would need to land, if either
+     turns out to matter for real software being tested against - bad
+     lines now stall the CPU correctly, but a raster IRQ handler that
+     pokes `$D020`/`$D021` mid-frame for a split-screen effect still
+     won't show up in the picture, since rendering itself is still
+     once-per-frame.
 7. **SID** - the 3-voice synth (square/triangle/sawtooth/noise
    generators, ADSR envelopes) without exact analog filter modeling
    at first; revisit filter accuracy later if it matters for a

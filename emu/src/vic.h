@@ -5,15 +5,17 @@
 #include "memory.h"
 
 /* VIC-II (../ROADMAP.md steps 5-6): a free-running raster line
- * counter, standard 40x25 hi-res text mode, a solid border/background
- * color, raster IRQs, and bad lines (the cycle-stealing DMA quirk a
- * lot of real software's raster-timed effects depend on - see
- * vic_take_badline_stall()'s header comment for exactly what's
- * modeled and what isn't). Rendering still happens once per whole
- * frame, not scanline-by-scanline, so there's no notion of mid-frame
- * raster EFFECTS yet even though the underlying timing (raster IRQs,
- * bad-line CPU stalls) is now real. Deliberately not implemented yet:
- * multicolor/extended-background-color text modes, bitmap modes,
+ * counter, 40x25 hi-res AND multicolor text mode (mixed per-cell, real
+ * hardware "mode 3" - see vic_render_frame()'s header comment), a
+ * solid border/background color (plus two extra multicolor-only
+ * background colors, $D022/$D023), raster IRQs, and bad lines (the
+ * cycle-stealing DMA quirk a lot of real software's raster-timed
+ * effects depend on - see vic_take_badline_stall()'s header comment
+ * for exactly what's modeled and what isn't). Rendering still happens
+ * once per whole frame, not scanline-by-scanline, so there's no notion
+ * of mid-frame raster EFFECTS yet even though the underlying timing
+ * (raster IRQs, bad-line CPU stalls) is now real. Deliberately not
+ * implemented yet: extended-background-color text mode, bitmap modes,
  * sprites, and light pen.
  *
  * PAL timing: 63 cycles/line, 312 lines/frame (see PAL_CYCLES_PER_LINE/
@@ -131,6 +133,18 @@ uint32_t vic_take_badline_stall(Vic *vic);
  * VIC_CANVAS_W x VIC_CANVAS_H, top-left origin, row stride given in
  * PIXELS by `stride` so a caller can wrap a cairo (or similar) surface
  * with its own alignment padding without a reformatting pass).
+ *
+ * Text mode is "mixed" when MCM ($D016 bit4) is set - real hardware
+ * behavior, not a bug: color RAM's bit3 becomes a PER-CELL mode flag
+ * instead of part of the color. bit3=0 still renders that cell in
+ * plain hi-res, but masked to color RAM bits 0-2 (colors 0-7 only,
+ * since bit3 no longer means what it does when MCM is off); bit3=1
+ * renders it as true 4-color multicolor instead (background color 0/1/2
+ * - $D021/$D022/$D023 - or color RAM bits 0-2 as the 4th color),
+ * each of the 4 possible 2-bit values covering 2 real pixels instead
+ * of 1, so multicolor cells are at half the horizontal resolution of
+ * hi-res ones. When MCM is off entirely, every cell is plain hi-res
+ * using the full 4-bit color RAM value, same as before this existed.
  *
  * `mem` is read directly (mem->ram / mem->char_rom), NOT through
  * memory_read() - the VIC has its own, separate view of memory that

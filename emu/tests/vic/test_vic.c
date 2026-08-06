@@ -16,7 +16,11 @@ static int failures = 0;
     if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); failures++; } \
 } while (0)
 
-enum { REG_D011 = 0x11, REG_D012 = 0x12, REG_D018 = 0x18, REG_D019 = 0x19, REG_D01A = 0x1A, REG_D020 = 0x20, REG_D021 = 0x21 };
+enum {
+    REG_D011 = 0x11, REG_D012 = 0x12, REG_D016 = 0x16, REG_D018 = 0x18,
+    REG_D019 = 0x19, REG_D01A = 0x1A, REG_D020 = 0x20, REG_D021 = 0x21,
+    REG_D022 = 0x22, REG_D023 = 0x23,
+};
 
 static void test_raster_counter(void) {
     Vic vic;
@@ -90,6 +94,66 @@ static void test_bad_lines(void) {
     for (int line = 0; line < 8; line++) vic_tick(&vic_outside, PAL_CYCLES_PER_LINE); /* -> line 248 ($F8): matching YSCROLL again, but past the window's top edge */
     CHECK(vic_take_badline_stall(&vic_outside) == 0,
           "bad lines: a matching YSCROLL just outside the $30-$F7 window ($F8/248) should not stall");
+}
+
+static void test_multicolor_text_mode(void) {
+    Vic vic;
+    Memory mem;
+    vic_init(&vic);
+    memory_init(&mem);
+
+    vic_write(&vic, REG_D011, 0x10); /* DEN */
+    vic_write(&vic, REG_D016, 0x10); /* MCM on */
+    vic_write(&vic, REG_D018, 0x10); /* screen ptr -> $0400, char ptr -> $0000 (plain RAM) */
+    vic_write(&vic, REG_D021, 1);    /* background color 0 = white (index 1) */
+    vic_write(&vic, REG_D022, 2);    /* background color 1 = red (index 2) */
+    vic_write(&vic, REG_D023, 5);    /* background color 2 = green (index 5) */
+
+    mem.ram[0x0400] = 0;    /* char code 0 */
+    mem.ram[0x0000] = 0x1B; /* 00 01 10 11 - one of each pixel-pair value */
+    vic_color_ram_write(&vic, 0, 0x0D); /* 1101: bit3 set (multicolor cell), low 3 bits = 5 (green) - the "11" pair's color */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row0 = &pixels[VIC_BORDER_Y * VIC_CANVAS_W + VIC_BORDER_X];
+
+    CHECK(row0[0] == 0xFFFFFF && row0[1] == 0xFFFFFF, "multicolor: pixel-pair '00' should render background color 0, 2 pixels wide");
+    CHECK(row0[2] == 0x68372B && row0[3] == 0x68372B, "multicolor: pixel-pair '01' should render background color 1, 2 pixels wide");
+    CHECK(row0[4] == 0x588D43 && row0[5] == 0x588D43, "multicolor: pixel-pair '10' should render background color 2, 2 pixels wide");
+    CHECK(row0[6] == 0x588D43 && row0[7] == 0x588D43, "multicolor: pixel-pair '11' should render color RAM's low 3 bits as the 4th color, 2 pixels wide");
+}
+
+static void test_mcm_bit3_clear_stays_hires(void) {
+    Vic vic;
+    Memory mem;
+    vic_init(&vic);
+    memory_init(&mem);
+
+    vic_write(&vic, REG_D011, 0x10); /* DEN */
+    vic_write(&vic, REG_D016, 0x10); /* MCM on */
+    vic_write(&vic, REG_D018, 0x10); /* screen ptr -> $0400, char ptr -> $0000 (plain RAM) */
+    vic_write(&vic, REG_D021, 0);    /* background = black */
+
+    mem.ram[0x0400] = 0;
+    /* 10110100 - deliberately NOT a "looks the same either way" pattern:
+     * read as hi-res this is fg,bg,fg,fg,bg,fg,bg,bg (8 distinct 1px
+     * values); read as multicolor pairs it would be 10,11,01,00 - bg2,
+     * fg,bg1,bg0 instead (4 distinct 2px-wide values) - a real test of
+     * WHICH path rendered, not just what the pixels happen to be. */
+    mem.ram[0x0000] = 0xB4;
+    vic_color_ram_write(&vic, 0, 5); /* bit3 CLEAR (5 < 8): must force plain hi-res despite MCM being on globally */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row0 = &pixels[VIC_BORDER_Y * VIC_CANVAS_W + VIC_BORDER_X];
+
+    uint32_t fg = 0x588D43, bg = 0x000000;
+    uint32_t expected[8] = {fg, bg, fg, fg, bg, fg, bg, bg};
+    int ok = 1;
+    for (int i = 0; i < 8; i++) {
+        if (row0[i] != expected[i]) ok = 0;
+    }
+    CHECK(ok, "MCM on but color RAM bit3 clear: cell should still render plain hi-res (per-pixel), not multicolor pixel-pairs");
 }
 
 static void test_den_blanks_to_border(void) {
@@ -177,6 +241,8 @@ int main(void) {
     test_raster_counter();
     test_raster_irq();
     test_bad_lines();
+    test_multicolor_text_mode();
+    test_mcm_bit3_clear_stays_hires();
     test_den_blanks_to_border();
     test_text_rendering_from_ram();
     test_char_rom_visibility_quirk();

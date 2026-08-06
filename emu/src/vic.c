@@ -9,12 +9,14 @@
 enum {
     REG_D011 = 0x11, /* control register 1: bit7=raster MSB (read)/compare MSB (write), bit4=DEN, bit3=RSEL (not modeled), bits0-2=YSCROLL (not modeled) */
     REG_D012 = 0x12, /* raster (read: live low 8 bits; write: compare low 8 bits) */
-    REG_D016 = 0x16, /* control register 2: MCM/CSEL/XSCROLL - stored only, not modeled */
+    REG_D016 = 0x16, /* control register 2: bit4=MCM, bit3=CSEL (not modeled), bits0-2=XSCROLL (not modeled) */
     REG_D018 = 0x18, /* memory pointers: bits4-7=screen pointer (1K units), bits1-3=char/bitmap pointer (2K units) */
     REG_D019 = 0x19, /* IRQ status: bits0-3 pending (bit0=raster, bits1-3=sprite collisions/light pen - never set, not modeled), bit7=read-only summary. Write CLEARS whichever of bits0-3 are 1 in the value written - see vic_write(). */
     REG_D01A = 0x1A, /* IRQ enable: bits0-3, plain read/write */
     REG_D020 = 0x20, /* border color (low nibble) */
     REG_D021 = 0x21, /* background color 0 (low nibble) */
+    REG_D022 = 0x22, /* background color 1 (low nibble) - multicolor text mode only */
+    REG_D023 = 0x23, /* background color 2 (low nibble) - multicolor text mode only */
 };
 
 #define VIC_IRQ_RASTER 0x01
@@ -124,6 +126,9 @@ static void fill_rect(uint32_t *pixels, int stride, int x0, int y0, int w, int h
 void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixels, int stride) {
     uint32_t border_color = VIC_PALETTE[vic->regs[REG_D020] & 0x0F];
     uint32_t bg_color = VIC_PALETTE[vic->regs[REG_D021] & 0x0F];
+    uint32_t bg1_color = VIC_PALETTE[vic->regs[REG_D022] & 0x0F];
+    uint32_t bg2_color = VIC_PALETTE[vic->regs[REG_D023] & 0x0F];
+    int mcm = (vic->regs[REG_D016] & 0x10) != 0;
 
     fill_rect(pixels, stride, 0, 0, VIC_CANVAS_W, VIC_CANVAS_H, border_color);
 
@@ -151,7 +156,21 @@ void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixel
         for (int col = 0; col < VIC_TEXT_COLS; col++) {
             uint16_t cell = (uint16_t)(row * VIC_TEXT_COLS + col);
             uint8_t char_code = mem->ram[(uint16_t)(screen_base + cell)];
-            uint32_t fg_color = VIC_PALETTE[vic->color_ram[cell] & 0x0F];
+            uint8_t color_val = vic->color_ram[cell] & 0x0F;
+
+            /* Real hardware "mixed mode": with MCM off, every cell is
+             * plain hi-res using the full 4-bit color RAM value. With
+             * MCM on, color RAM bit3 is repurposed as a per-CELL mode
+             * flag instead of part of the color - bit3=0 still renders
+             * that one cell in plain hi-res (masked to 3 bits, colors
+             * 0-7 only); bit3=1 renders it as true 4-color multicolor
+             * instead, at half horizontal resolution. Both cases use
+             * the same masked 3-bit value as this cell's foreground
+             * (also multicolor's "11" pixel-pair color), which is why
+             * one expression covers all three. */
+            int cell_multicolor = mcm && (color_val & 0x08);
+            uint32_t fg_color = VIC_PALETTE[mcm ? (color_val & 0x07) : color_val];
+            uint32_t mc_colors[4] = {bg_color, bg1_color, bg2_color, fg_color};
 
             for (int line = 0; line < 8; line++) {
                 uint8_t bits = char_rom_visible
@@ -160,8 +179,21 @@ void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixel
 
                 int py = VIC_BORDER_Y + row * 8 + line;
                 uint32_t *prow = pixels + (size_t)py * (size_t)stride + VIC_BORDER_X + col * 8;
-                for (int px = 0; px < 8; px++) {
-                    prow[px] = (bits & (0x80 >> px)) ? fg_color : bg_color;
+
+                if (cell_multicolor) {
+                    /* Each 2-bit pair (bits 7-6, 5-4, 3-2, 1-0) picks
+                     * one of 4 colors and covers 2 real pixels, not 1 -
+                     * multicolor mode halves horizontal resolution. */
+                    for (int pair = 0; pair < 4; pair++) {
+                        uint8_t val = (bits >> (6 - pair * 2)) & 0x03;
+                        uint32_t c = mc_colors[val];
+                        prow[pair * 2] = c;
+                        prow[pair * 2 + 1] = c;
+                    }
+                } else {
+                    for (int px = 0; px < 8; px++) {
+                        prow[px] = (bits & (0x80 >> px)) ? fg_color : bg_color;
+                    }
                 }
             }
         }
