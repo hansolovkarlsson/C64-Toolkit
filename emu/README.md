@@ -7,7 +7,7 @@ leaning on an existing emulator core.
 
 **Status:** steps 1-6 are done (step 6, VIC-II second pass, done except
 light pen - not planned, see `ROADMAP.md`'s "Not yet scheduled") and
-step 7 (SID) is in progress - a full legal 6502/6510 instruction set (`src/cpu.c`,
+step 7 (SID) is nearly done - a full legal 6502/6510 instruction set (`src/cpu.c`,
 verified against Klaus Dormann's 6502 functional test suite plus a
 hand-written interrupt/reset check), the C64's memory map/bank
 switching (`src/memory.c`, verified against the full mode table with
@@ -29,10 +29,10 @@ genuinely stalls for `VIC_BADLINE_STALL_CYCLES` when one is entered]),
 and SID (`src/sid.c` - the 3-voice synth: all 4 waveforms [triangle/
 sawtooth/pulse/noise], hard sync, ring modulation, ADSR envelopes using
 the real chip's published rate-period and exponential decay/release
-tables, wired into the address map at `$D400`-`$D7FF`; no analog filter
-modeling yet, and no audio OUTPUT wired up anywhere yet either - the
-chip model runs and is fully tested, but nothing pulls samples out of
-it into an actual sound API, so the emulator is still silent).
+tables, wired into the address map at `$D400`-`$D7FF`, AND now actually
+audible - `gtk/main.c` plays real SID output back through SDL2, see
+"Building" below for the extra dependency this adds; no analog filter
+modeling yet, the one piece of step 7 still open).
 **This is enough to actually boot**: `tests/boot/` is an automated
 end-to-end gate that fetches a real open-source ROM replacement (the
 MEGA65 `open-roms` project) and checks that the whole machine runs it
@@ -86,7 +86,7 @@ emu/
 ## Building
 
 ```sh
-make            # -> bin/c64emu (requires GTK4 dev libraries, e.g. `brew install gtk4`)
+make            # -> bin/c64emu (requires GTK4 AND SDL2 dev libraries, e.g. `brew install gtk4 sdl2`)
 make clean
 
 ./bin/c64emu [rom-dir]   # rom-dir defaults to "roms" (see "ROM images" below)
@@ -97,7 +97,11 @@ real VIC-II output - see `vic.h`'s header comment for exactly what's
 modeled (40x25 hi-res, multicolor, and extended-background-color text
 mode, standard and multicolor bitmap mode, all 8 hardware sprites,
 border/background color, DEN blanking, raster IRQs, bad lines) - light
-pen is not planned, see `ROADMAP.md`. It runs fine with no ROMs loaded (the CPU just
+pen is not planned, see `ROADMAP.md`. It also plays real SID audio
+through SDL2 (`SDL_OpenAudioDevice` + a callback, see `gtk/main.c`) -
+if SDL audio fails to open for any reason, that's never fatal, the
+emulator just runs silently, the same as running with 0/3 ROMs. It
+runs fine with no ROMs loaded (the CPU just
 executes a harmless BRK loop on zeroed memory, and the screen stays
 whatever color `$D021`/`$D020` default to), which is enough to see the
 window/event loop working before real ROMs are available - but with
@@ -125,7 +129,7 @@ unlike Commodore's own ROMs - see `tests/boot/README.md`) and checks
 that the whole machine actually boots to a `READY.` prompt, catching
 integration bugs no single module's tests could.
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (SID audio output).
+See [`ROADMAP.md`](ROADMAP.md) for what's next (SID's analog filter, or joystick input in the GTK shell).
 
 ## ROM images
 

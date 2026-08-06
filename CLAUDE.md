@@ -26,13 +26,13 @@ newer and was scaffolded directly in this repo (no subtree history).
   multicolor, AND extended-background-color text mode, standard AND
   multicolor bitmap mode, all 8 hardware sprites, border/background
   color, raster IRQs, bad lines], SID [3-voice synth: all 4 waveforms,
-  ADSR envelopes, hard sync, ring modulation - wired into the address
-  map, no audio output yet], a GTK4 shell). Does not share code with
-  `asm/`'s `mini6502.py` test harness — see "`c64emu` (`emu/`)" below
-  for why they're deliberately separate. **Boots real system
-  software**: tested against the MEGA65 `open-roms` open-source ROM
-  replacement, it runs unmodified to a readable BASIC `READY.` prompt.
-  Still no sound (SID chip logic exists but nothing plays it back yet).
+  ADSR envelopes, hard sync, ring modulation, played back for real
+  through SDL2 - no analog filter modeling yet], a GTK4 shell). Does
+  not share code with `asm/`'s `mini6502.py` test harness — see
+  "`c64emu` (`emu/`)" below for why they're deliberately separate.
+  **Boots real system software**: tested against the MEGA65 `open-roms`
+  open-source ROM replacement, it runs unmodified to a readable BASIC
+  `READY.` prompt. Has sound now.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
@@ -142,7 +142,7 @@ bitwise/comparison/control-flow), `pointers.c`, `recursion.c` (including an
 
 ```sh
 cd emu
-make                       # -> bin/c64emu (needs GTK4 dev libs, e.g. `brew install gtk4`)
+make                       # -> bin/c64emu (needs GTK4 AND SDL2 dev libs, e.g. `brew install gtk4 sdl2`)
 make clean
 
 ./bin/c64emu [rom-dir]     # rom-dir defaults to "roms"; runs fine with 0/3 ROMs loaded
@@ -308,11 +308,11 @@ tested against the MEGA65 `open-roms` open-source ROM replacement, it
 runs unmodified to a readable BASIC `READY.` prompt) -> VIC-II second
 pass done (raster IRQs, bad lines, multicolor text mode, both bitmap
 sub-modes, extended-background-color mode, and sprites - light pen not
-planned, see `emu/ROADMAP.md`'s "Not yet scheduled") -> SID (chip core
-and address-map wiring done - waveforms, ADSR envelopes, hard sync,
-ring modulation; audio output, i.e. an actual OS audio backend, not
-started). PAL timing only; cartridge and 1541 disk-drive emulation are
-explicitly out of scope for now.
+planned, see `emu/ROADMAP.md`'s "Not yet scheduled") -> SID (chip core,
+address-map wiring, and real SDL2 audio output all done - waveforms,
+ADSR envelopes, hard sync, ring modulation; exact analog filter
+modeling not started). PAL timing only; cartridge and 1541 disk-drive
+emulation are explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
   instruction set, addressing modes, and per-instruction cycle counts
@@ -584,8 +584,7 @@ explicitly out of scope for now.
   interrupt output at all). Verified against hand-derived expectations
   for keyboard scanning (both directions), joystick/keyboard
   pin-sharing, and IRQ/NMI propagation (`tests/machine/`). SID audio
-  OUTPUT isn't wired up anywhere yet (no sample-rate conversion, no OS
-  audio API) — see `sid.h`'s header comment.
+  OUTPUT is wired up in `gtk/main.c`, not here — see that bullet below.
 - **GTK4 shell** (`gtk/main.c`): drives the whole `Machine` via a
   `g_timeout_add` loop at ~50 Hz (PAL frame rate; `CYCLES_PER_FRAME`
   — literally `PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME` from `vic.h`
@@ -612,7 +611,35 @@ explicitly out of scope for now.
   toolkit's usual `-std=c99` — GTK4's own headers rely on C11
   typedef-redefinition tolerance (`G_DECLARE_*_TYPE` macros);
   `src/*.c` itself stays plain C99-compatible regardless of which
-  standard compiles it.
+  standard compiles it. **Audio**: real SID output, played back through
+  SDL2 (`SDL_Init(SDL_INIT_AUDIO)` + `SDL_OpenAudioDevice()` + a
+  callback — a new dependency alongside GTK4's own, `brew install
+  gtk4 sdl2`). `sid_tick()`/`sid_output()` are only ever called from
+  the GTK main thread, inside `tick()` — SDL's audio callback runs on
+  its OWN dedicated real-time thread, so touching `Sid` directly from
+  it would be a genuine data race, not just a style concern; the two
+  are bridged through a small ring buffer instead, guarded by
+  `SDL_LockAudioDevice()`/`SDL_UnlockAudioDevice()` (SDL's own
+  documented mechanism for exactly this split — locking pauses callback
+  invocation, so the main thread can safely touch shared state and the
+  callback needs no locking of its own). `tick()` decides how many of
+  SID's real clock cycles are owed per 44.1kHz sample
+  (`SID_CLOCK_HZ`, reusing this file's existing ~50Hz-timer
+  approximation of the real PAL clock rather than introducing a second,
+  separate one), accumulating fractionally since that ratio isn't a
+  whole number, and pushes finished samples into the ring; the callback
+  only ever reads it, zero-filling on underrun rather than repeating
+  stale samples. `sid_output()`'s raw output is deliberately DC-biased,
+  not centered on 0 (see `sid.h`) — this is where that finally gets
+  resolved, shifting each sample down before queuing so it plays back
+  as normal bipolar PCM. Audio failing to open is never fatal, same
+  graceful-degradation spirit as running with 0/3 ROMs loaded. Checked
+  by actually running the built binary with real ROMs loaded and
+  confirming it starts, opens the audio device without error, and
+  shuts down cleanly — not covered by an automated test the way the
+  chip core is (`tests/sid/`), since there's no meaningful way to unit-
+  test "did a real ring buffer correctly hand off to a real audio
+  thread" without an actual running audio backend.
 - **End-to-end boot test** (`tests/boot/`): the odd one out among
   `emu/`'s test suites — every other one (`tests/cpu/`, `tests/memory/`,
   `tests/cia/`, `tests/machine/`, `tests/vic/`) checks a single module

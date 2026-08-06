@@ -19,18 +19,18 @@
  * itself (see cia.h), which is why it lives here and not in cia.c.
  * SID itself needs no such C64-specific wiring - sid_tick() is called
  * from machine_step() the same way cia_tick()/vic_tick() are, and
- * there's nothing beyond that for machine.c to own; actual audio
- * OUTPUT (pulling samples via sid_output() at some real sample rate
- * and feeding an OS audio API) isn't wired up anywhere yet - that's a
- * GTK-shell-level concern, not machine.c's, the same way blitting
- * vic_render_frame()'s pixels is gtk/main.c's job, not machine.c's. */
+ * there's nothing beyond that for machine.c to own; pulling samples via
+ * sid_output() at a real sample rate and feeding an OS audio API is a
+ * GTK-shell-level concern instead, and lives in gtk/main.c (SDL2), the
+ * same way blitting vic_render_frame()'s pixels is gtk/main.c's job,
+ * not machine.c's. */
 typedef struct {
     Cpu6502 cpu;
     Memory mem;
     Cia cia1; /* keyboard matrix, joystick 1/2, IRQ */
     Cia cia2; /* serial bus, VIC bank select, user port, NMI - only VIC bank select is modeled, via cia2's own PRA/DDRA (see machine_vic_bank()) */
     Vic vic;  /* text-mode display, see vic.h for exactly what's modeled */
-    Sid sid;  /* 3-voice synth, see sid.h for exactly what's modeled - no audio output wired up yet, see this struct's own header comment */
+    Sid sid;  /* 3-voice synth, see sid.h for exactly what's modeled - audio output lives in gtk/main.c, see this struct's own header comment */
 
     /* key_matrix[pa_bit] bit pb_bit set == that key is currently held.
      * pa_bit/pb_bit follow the standard published C64 keyboard matrix

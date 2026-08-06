@@ -5,8 +5,8 @@ CC ?= cc
 # chain), which -std=c99 warns on for every GTK/GDK/GSK type. src/
 # itself (cpu.c/memory.c) is plain C99 and unaffected either way.
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra
-PKG_CFLAGS := $(shell pkg-config --cflags gtk4)
-PKG_LIBS := $(shell pkg-config --libs gtk4)
+PKG_CFLAGS := $(shell pkg-config --cflags gtk4 sdl2)
+PKG_LIBS := $(shell pkg-config --libs gtk4 sdl2)
 
 BIN := bin/c64emu
 SOURCES := gtk/main.c src/cpu.c src/memory.c src/cia.c src/vic.c src/sid.c src/machine.c

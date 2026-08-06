@@ -267,10 +267,11 @@ each piece will live.
      OS audio API - `sid_tick()` advances internal state by real SID
      clock cycles (SID shares the CPU's PHI2 clock, no rate conversion
      needed) and `sid_output()` pulls the current instantaneous mixed
-     sample; a caller wanting actual playback would tick cycle-for-
-     cycle alongside the CPU and sample at whatever cadence produces
-     its target rate - see the next bullet for why that doesn't exist
-     yet. Each voice: a 24-bit phase-accumulator oscillator (all 4
+     sample; a caller wanting actual playback ticks cycle-for-cycle
+     alongside the CPU and samples at whatever cadence produces its
+     target rate - see this step's "Audio output" bullet below for
+     where that wiring actually lives. Each voice: a 24-bit
+     phase-accumulator oscillator (all 4
      waveforms - triangle/sawtooth/pulse/noise, the last via a 23-bit
      Fibonacci LFSR clocked off the same accumulator's bit19, which is
      why noise pitch tracks the frequency register like the others),
@@ -308,13 +309,38 @@ each piece will live.
      execute pauses, every other chip keeps running off the shared
      PHI2 clock). Doesn't affect `tests/boot/`'s cycle count or outcome
      - nothing in BASIC's own boot path touches SID registers.
-   - Audio output - not started: pulling samples out of `sid_output()`
-     at a real sample rate and feeding them to an actual OS audio API
-     is GTK-shell-level plumbing, not chip logic, the same way blitting
-     `vic_render_frame()`'s pixels was its own separate step (step 3)
-     from the VIC-II chip work itself. Until this lands, the emulator
-     has no sound even though the chip model is fully exercised by
-     `tests/sid/`.
+   - ~~Audio output~~ - done: SDL2 (a new dependency, `brew install
+     sdl2` alongside GTK4's own - see `README.md`'s "Building") plays
+     back real SID output via `SDL_OpenAudioDevice()` and a callback,
+     `gtk/main.c`. `sid_tick()`/`sid_output()` are only ever called from
+     the GTK main thread (inside `tick()`, the same ~50Hz loop that
+     already drives `machine_step()`) - SDL's audio callback runs on
+     its OWN dedicated real-time thread, so the two are bridged through
+     a small ring buffer rather than letting the callback touch `Sid`
+     directly, which would be a genuine data race, not just a style
+     concern. `tick()` decides how many of SID's real clock cycles
+     (`SID_CLOCK_HZ`, reusing this file's own existing ~50Hz-timer
+     approximation of the real PAL clock rather than a second, separate
+     one) are owed per 44.1kHz sample, accumulating fractionally since
+     that ratio isn't a whole number, and pushes finished samples into
+     the ring under `SDL_LockAudioDevice()`/`SDL_UnlockAudioDevice()` -
+     SDL's own documented mechanism for exactly this producer/consumer
+     split (locking pauses callback invocation, letting the main thread
+     safely touch shared state without the callback needing any locking
+     of its own). The callback itself only ever reads that ring,
+     zero-filling on underrun rather than repeating stale samples.
+     `sid_output()`'s raw output is deliberately DC-biased, not centered
+     on 0 (see `sid.h`) - `gtk/main.c` is where that finally gets
+     resolved, shifting each sample down before it's queued so it plays
+     back as normal bipolar PCM instead of a one-sided signal. Audio
+     failing to open is never fatal (same graceful-degradation spirit
+     as running with 0/3 ROMs loaded) - checked by actually running the
+     built binary with real ROMs loaded and confirming it starts,
+     opens the audio device without error, and shuts down cleanly; not
+     yet covered by an automated test the way the chip core is (there's
+     no meaningful way to unit-test "did a real ring buffer correctly
+     hand off to a real audio thread" without an actual running audio
+     backend, unlike `tests/sid/`'s pure chip-logic checks).
    - Exact analog filter modeling - not started; revisit if it matters
      for a specific piece of software being tested against, same
      deferral reasoning as VIC-II's own approximations.

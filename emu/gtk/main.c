@@ -16,9 +16,18 @@
  * and fed into CIA1 via machine_set_key(), so typing in this window
  * reaches BASIC/KERNAL once real ROM images are present (see
  * ../roms/README.md). Joystick input isn't wired up yet.
+ *
+ * Audio: SDL2 (SDL_OpenAudioDevice + a callback, see main()/
+ * audio_callback()) plays back real SID output - see the
+ * SID_SAMPLE_RATE/SID_CLOCK_HZ/audio_* comments below for how samples
+ * get from sid_output() (pulled from the GTK main thread, the only
+ * thread that ever touches Sid) into SDL's own separate real-time
+ * audio thread without a data race. Never fatal if it fails to open -
+ * the emulator just runs silently, the same as running with 0/3 ROMs.
  */
 
 #include <gtk/gtk.h>
+#include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "../src/machine.h"
@@ -31,12 +40,45 @@
 #define CYCLES_PER_FRAME (PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME)
 #define FRAME_MS 20
 
+/* Audio output (../ROADMAP.md step 7's last piece): SID itself (see
+ * sid.h) has no notion of a sample rate - sid_tick() already advances
+ * in lockstep with the CPU inside machine_step(), same as CIA/VIC, so
+ * this file is where "how many real SID clock cycles is one 44.1kHz
+ * sample worth" gets decided, the same way it's already where "how
+ * many CPU cycles is one video frame worth" (CYCLES_PER_FRAME above)
+ * gets decided. SID_CLOCK_HZ reuses this file's own 20ms/50Hz frame
+ * timer approximation rather than introducing a second, different
+ * approximation of the real PAL clock. */
+#define SID_SAMPLE_RATE 44100
+#define SID_CLOCK_HZ (CYCLES_PER_FRAME * 1000 / FRAME_MS) /* == 982800, this file's existing ~50Hz-timer approximation of the real ~985248Hz PAL clock */
+#define AUDIO_RING_SAMPLES 8192 /* ~185ms at 44.1kHz - generous slack against GTK timer jitter, see tick()'s own comment */
+
 typedef struct {
     Machine machine;
     GtkWidget *drawing_area;
     uint32_t *pixel_buf;  /* VIC_CANVAS_W x VIC_CANVAS_H, row stride given by pixel_stride (may have alignment padding - see activate()) */
     int pixel_stride;     /* in uint32_t units, not bytes */
     guint timeout_id;     /* the frame timer's source id, so it can be removed on window close - see on_window_destroy() */
+
+    /* Audio: a small SPSC ring buffer bridging the GTK main thread
+     * (the ONLY thread that ever calls sid_tick()/sid_output() - see
+     * machine_step() in tick() below) and SDL's own dedicated real-time
+     * audio callback thread (audio_callback(), which only ever READS
+     * this ring, never touches Sid directly) - see tick()'s comment for
+     * why ticking SID from two threads at once would be a real data
+     * race, not just a style choice. SDL_LockAudioDevice()/
+     * SDL_UnlockAudioDevice() (SDL's own documented mechanism for this
+     * exact producer/consumer split - locking pauses callback
+     * invocation, not the whole audio subsystem) guard every access
+     * from the main-thread side; the callback needs no locking of its
+     * own since SDL guarantees it never runs concurrently with a locked
+     * section. audio_dev is 0 if SDL audio failed to initialize (see
+     * main()) - the emulator still runs, just silently, the same
+     * graceful-degradation spirit as running with 0/3 ROMs loaded. */
+    SDL_AudioDeviceID audio_dev;
+    double sample_cycle_accum; /* fractional SID clock cycles owed toward the next sample - see tick() */
+    int16_t audio_ring[AUDIO_RING_SAMPLES];
+    int audio_ring_read, audio_ring_write, audio_ring_count;
 } App;
 
 /* GDK keyval -> C64 keyboard matrix (pa_bit selects the column CIA1's
@@ -127,11 +169,73 @@ static void draw_screen(GtkDrawingArea *area, cairo_t *cr, int width, int height
     cairo_surface_destroy(surface);
 }
 
+/* Main-thread side only - caller must hold the SDL audio device lock
+ * (see App's own comment on the ring buffer). Drops the sample if the
+ * ring is full rather than blocking or overwriting - shouldn't happen
+ * in practice given AUDIO_RING_SAMPLES's generous sizing, but dropping
+ * is the right failure mode for real-time audio either way (a stale
+ * sample is worse than a brief silence). */
+static void audio_push_sample(App *app, int16_t sample) {
+    if (app->audio_ring_count >= AUDIO_RING_SAMPLES) return;
+    app->audio_ring[app->audio_ring_write] = sample;
+    app->audio_ring_write = (app->audio_ring_write + 1) % AUDIO_RING_SAMPLES;
+    app->audio_ring_count++;
+}
+
+/* Runs on SDL's own audio thread, never the GTK main thread - see App's
+ * ring-buffer comment for why this only ever reads the ring, never
+ * touches Sid. Underruns (the emulator falling behind real time, or
+ * simply nothing enabled on any SID voice) are filled with silence
+ * rather than left as garbage/repeated stale samples. */
+static void audio_callback(void *userdata, Uint8 *stream, int len) {
+    App *app = userdata;
+    int16_t *out = (int16_t *)stream;
+    int n = len / (int)sizeof(int16_t);
+    for (int i = 0; i < n; i++) {
+        if (app->audio_ring_count > 0) {
+            out[i] = app->audio_ring[app->audio_ring_read];
+            app->audio_ring_read = (app->audio_ring_read + 1) % AUDIO_RING_SAMPLES;
+            app->audio_ring_count--;
+        } else {
+            out[i] = 0;
+        }
+    }
+}
+
 static gboolean tick(gpointer user_data) {
     App *app = user_data;
     int budget = CYCLES_PER_FRAME;
-    while (budget > 0)
-        budget -= machine_step(&app->machine);
+    while (budget > 0) {
+        int cycles = machine_step(&app->machine);
+        budget -= cycles;
+
+        /* SID ticked exactly once already, inside machine_step() above
+         * (see machine.c) - this just decides when enough of ITS clock
+         * cycles have gone by to owe the audio thread another sample,
+         * accumulating fractionally since SID_CLOCK_HZ/SID_SAMPLE_RATE
+         * (~22.29) isn't a whole number. Skipped entirely if SDL audio
+         * never opened (audio_dev == 0) - see main(). */
+        if (app->audio_dev != 0) {
+            app->sample_cycle_accum += cycles;
+            if (app->sample_cycle_accum >= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE) {
+                SDL_LockAudioDevice(app->audio_dev);
+                while (app->sample_cycle_accum >= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE) {
+                    /* sid_output() is deliberately DC-biased, 0..32767,
+                     * not centered on 0 (matching real hardware - see
+                     * sid.h's own header comment on sid_output()) -
+                     * that comment explicitly defers AC-centering to
+                     * whatever code actually wires up playback, which
+                     * is exactly this line: shift down to roughly
+                     * -16384..16383 so it plays back as a normal
+                     * bipolar PCM waveform instead of a one-sided one. */
+                    int16_t sample = (int16_t)(sid_output(&app->machine.sid) - 16384);
+                    audio_push_sample(app, sample);
+                    app->sample_cycle_accum -= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE;
+                }
+                SDL_UnlockAudioDevice(app->audio_dev);
+            }
+        }
+    }
     gtk_widget_queue_draw(app->drawing_area);
     return G_SOURCE_CONTINUE;
 }
@@ -218,7 +322,7 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
 }
 
 int main(int argc, char **argv) {
-    App app;
+    App app = {0}; /* zeroes audio_dev/sample_cycle_accum/audio_ring_* too - see tick()'s use of them */
     machine_init(&app.machine);
 
     /* Optional first arg overrides the ROM directory (default: "roms",
@@ -233,9 +337,38 @@ int main(int argc, char **argv) {
 
     machine_reset(&app.machine);
 
+    /* Audio failing to open is never fatal - same graceful-degradation
+     * spirit as running with 0/3 ROMs loaded (app.audio_dev stays 0,
+     * which tick() checks before ever touching SDL). */
+    if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+        fprintf(stderr, "SDL_Init(SDL_INIT_AUDIO) failed: %s - running without audio\n", SDL_GetError());
+    } else {
+        SDL_AudioSpec want;
+        SDL_zero(want);
+        want.freq = SID_SAMPLE_RATE;
+        want.format = AUDIO_S16SYS;
+        want.channels = 1; /* SID mixes all 3 voices down to one channel already - see sid_output() */
+        want.samples = 1024;
+        want.callback = audio_callback;
+        want.userdata = &app;
+        /* NULL device name/allow_changes=0: take the system default
+         * output device as-is rather than negotiating a different
+         * rate/format - simplest choice, and 44.1kHz mono S16 is a
+         * format essentially every backend supports natively anyway. */
+        app.audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
+        if (app.audio_dev == 0) {
+            fprintf(stderr, "SDL_OpenAudioDevice failed: %s - running without audio\n", SDL_GetError());
+        } else {
+            SDL_PauseAudioDevice(app.audio_dev, 0); /* SDL opens devices paused - this actually starts playback */
+        }
+    }
+
     GtkApplication *gtk_app = gtk_application_new("dev.c64toolkit.c64emu", G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(gtk_app, "activate", G_CALLBACK(activate), &app);
     int status = g_application_run(G_APPLICATION(gtk_app), 0, NULL);
     g_object_unref(gtk_app);
+
+    if (app.audio_dev != 0) SDL_CloseAudioDevice(app.audio_dev);
+    SDL_Quit();
     return status;
 }
