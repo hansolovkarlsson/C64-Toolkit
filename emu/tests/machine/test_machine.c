@@ -112,6 +112,33 @@ static void test_vic_raster_irq_reaches_cpu(void) {
     CHECK(m.cpu.irq_line != 0, "VIC-II raster IRQ: cpu.irq_line should go high once the raster reaches the compare line with the source unmasked");
 }
 
+static void test_bad_line_stalls_cpu(void) {
+    Machine m;
+    machine_init(&m);
+    machine_reset(&m);
+
+    memory_write(&m.mem, 0xD011, 0x10); /* DEN=1, YSCROLL=0 - first bad line is at raster line $30 (48) */
+
+    /* Step until we hit the dedicated stall-consuming machine_step()
+     * call - identifiable by its cycle count, VIC_BADLINE_STALL_CYCLES
+     * (40), since no real 6502 instruction takes anywhere near that
+     * many cycles (max ~7-8). */
+    int found_stall = 0;
+    int total = 0;
+    while (total < 200000 && !found_stall) {
+        uint16_t pc_before = m.cpu.pc;
+        uint64_t cpu_cycles_before = m.cpu.cycles;
+        int c = machine_step(&m);
+        total += c;
+        if (c == VIC_BADLINE_STALL_CYCLES) {
+            found_stall = 1;
+            CHECK(m.cpu.pc == pc_before, "bad line stall: CPU PC should not advance during the stall call");
+            CHECK(m.cpu.cycles == cpu_cycles_before, "bad line stall: cpu.cycles (only incremented inside cpu_step()) should not advance during the stall call");
+        }
+    }
+    CHECK(found_stall, "bad line stall: should have encountered a 40-cycle stall call while stepping toward line $30");
+}
+
 static void test_cia2_nmi_reaches_cpu(void) {
     Machine m;
     machine_init(&m);
@@ -137,6 +164,7 @@ int main(void) {
     test_joystick2_shares_pra();
     test_cia1_irq_reaches_cpu();
     test_vic_raster_irq_reaches_cpu();
+    test_bad_line_stalls_cpu();
     test_cia2_nmi_reaches_cpu();
 
     if (failures == 0) {

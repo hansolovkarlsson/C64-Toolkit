@@ -85,18 +85,33 @@ void vic_color_ram_write(Vic *vic, uint16_t addr, uint8_t v) {
 }
 
 void vic_tick(Vic *vic, int cycles) {
-    /* `cycles` is always one CPU instruction's worth here (2-7, see
-     * machine_step()) - always less than a full line (63), so at most
-     * one line boundary is ever crossed per call. That's what makes
-     * this simple old/new comparison correct without needing to walk
-     * every line individually. */
+    /* `cycles` is always one CPU instruction's worth here (2-7) or one
+     * bad-line stall's worth (VIC_BADLINE_STALL_CYCLES) - both well
+     * under a full line (63), so at most one line boundary is ever
+     * crossed per call. That's what makes this simple old/new
+     * comparison correct without needing to walk every line
+     * individually - see vic.h's header comment for both. */
     uint32_t old_line = vic->raster_cycle / PAL_CYCLES_PER_LINE;
     vic->raster_cycle = (uint32_t)((vic->raster_cycle + (uint32_t)cycles) % (PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME));
     uint32_t new_line = vic->raster_cycle / PAL_CYCLES_PER_LINE;
 
-    if (new_line != old_line && new_line == vic->raster_compare) {
+    if (new_line == old_line) return;
+
+    if (new_line == vic->raster_compare) {
         vic->regs[REG_D019] |= VIC_IRQ_RASTER;
     }
+
+    int den = (vic->regs[REG_D011] & 0x10) != 0;
+    int yscroll = vic->regs[REG_D011] & 0x07;
+    if (den && new_line >= 0x30 && new_line <= 0xF7 && (int)(new_line & 0x07) == yscroll) {
+        vic->badline_stall_cycles = VIC_BADLINE_STALL_CYCLES;
+    }
+}
+
+uint32_t vic_take_badline_stall(Vic *vic) {
+    uint32_t stall = vic->badline_stall_cycles;
+    vic->badline_stall_cycles = 0;
+    return stall;
 }
 
 static void fill_rect(uint32_t *pixels, int stride, int x0, int y0, int w, int h, uint32_t color) {

@@ -136,13 +136,37 @@ each piece will live.
      an IRQ handler that pokes `$D020`/`$D021` mid-frame for a raster
      bar won't show up in the picture yet even though the IRQ itself
      now fires at the right line).
-   - "Bad lines" (the cycle-stealing DMA quirk), multicolor and
-     extended-background-color text modes, bitmap modes, sprites, and
-     light pen - not started. Also where real border geometry
-     (currently a fixed, plausible-looking approximation - see
-     `vic.h`) and scanline-by-scanline rendering (instead of one whole
-     frame per `vic_render_frame()` call) would need to land, if either
-     turns out to matter for real software being tested against.
+   - ~~Bad lines~~ - done: real VIC-II hardware asserts `/RDY` (freezing
+     the CPU) whenever the raster line's low 3 bits match YSCROLL
+     (`$D011` bits 0-2), the line is within `$30`-`$F7`, and DEN is set
+     - `vic_tick()` detects this the instant such a line is entered and
+     sets a pending stall of `VIC_BADLINE_STALL_CYCLES` (40, the
+     standard widely-cited figure - not independently cycle-verified
+     against real hardware). Since `cpu.c` executes whole instructions
+     atomically with no way to interrupt one mid-flight, the stall is
+     applied as its own dedicated `machine_step()` call right when
+     entered - `vic_take_badline_stall()` returns the pending amount
+     and clears it, and if nonzero, that step only ticks the CIAs/VIC
+     by that many cycles and skips `cpu_step()` entirely, so the CPU
+     makes zero progress that call (matching a real `/RDY` stall) - see
+     `machine_step()`. Not modeled: the exact real timing of when
+     within the line the stall starts (real hardware: partway through,
+     around cycle 12-17; here: applied in one lump at the instant of
+     line-entry) or DEN's real per-line latch behavior (checked as a
+     plain current-value read instead). Verified against hand-derived
+     expectations, including that DEN=0 and lines outside the window
+     correctly suppress it (`tests/vic/`), and that the CPU's PC/cycle
+     count genuinely don't advance during a stall call (`tests/machine/`).
+   - Multicolor and extended-background-color text modes, bitmap
+     modes, sprites, and light pen - not started. Also where real
+     border geometry (currently a fixed, plausible-looking
+     approximation - see `vic.h`) and scanline-by-scanline rendering
+     (instead of one whole frame per `vic_render_frame()` call) would
+     need to land, if either turns out to matter for real software
+     being tested against - bad lines now stall the CPU correctly, but
+     a raster IRQ handler that pokes `$D020`/`$D021` mid-frame for a
+     split-screen effect still won't show up in the picture, since
+     rendering itself is still once-per-frame.
 7. **SID** - the 3-voice synth (square/triangle/sawtooth/noise
    generators, ADSR envelopes) without exact analog filter modeling
    at first; revisit filter accuracy later if it matters for a

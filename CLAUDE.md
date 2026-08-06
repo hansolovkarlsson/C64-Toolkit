@@ -23,13 +23,13 @@ newer and was scaffolded directly in this repo (no subtree history).
 - **`emu/`** — `c64emu`, a from-scratch, general-purpose C64 emulator
   (cycle-stepped 6502/6510 CPU, memory/bank-switching, both CIAs
   including real keyboard/joystick wiring, VIC-II [40x25 text mode,
-  border/background color, raster IRQs], a GTK4 shell, eventually
-  SID). Does not share code with `asm/`'s `mini6502.py` test harness —
-  see "`c64emu` (`emu/`)" below for why they're deliberately separate.
-  **Boots real system software**: tested against the MEGA65
+  border/background color, raster IRQs, bad lines], a GTK4 shell,
+  eventually SID). Does not share code with `asm/`'s `mini6502.py` test
+  harness — see "`c64emu` (`emu/`)" below for why they're deliberately
+  separate. **Boots real system software**: tested against the MEGA65
   `open-roms` open-source ROM replacement, it runs unmodified to a
-  readable BASIC `READY.` prompt. Still no sound, no bad lines, no
-  multicolor/bitmap modes, no sprites.
+  readable BASIC `READY.` prompt. Still no sound, no multicolor/bitmap
+  modes, no sprites.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
@@ -297,9 +297,9 @@ memory/bank-switching -> GTK4 shell -> CIA 1/2 -> VIC-II first pass
 (all five done, and as of VIC-II this is now enough to actually boot —
 tested against the MEGA65 `open-roms` open-source ROM replacement, it
 runs unmodified to a readable BASIC `READY.` prompt) -> VIC-II second
-pass (raster IRQs done; bad lines, multicolor/bitmap modes, sprites
-not started) -> SID. PAL timing only; cartridge and 1541 disk-drive
-emulation are explicitly out of scope for now.
+pass (raster IRQs and bad lines done; multicolor/bitmap modes and
+sprites not started) -> SID. PAL timing only; cartridge and 1541
+disk-drive emulation are explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
   instruction set, addressing modes, and per-instruction cycle counts
@@ -388,13 +388,26 @@ emulation are explicitly out of scope for now.
   a `memset(m, 0, sizeof(*m))` at the top of `machine_init()`); and
   `vic_read()`'s `$D019` bit 7 summary was documented in a comment but
   never actually implemented (fell through to plain passive storage).
-  Deliberately still deferred: bad lines, multicolor/extended-
-  background-color text modes, bitmap modes, sprites, light pen —
-  rendering still happens once per whole frame, not scanline by
-  scanline, so a raster IRQ handler that pokes `$D020`/`$D021`
-  mid-frame for a split-screen effect won't show up in the picture yet
-  even though the IRQ itself now fires at the right line. Verified
-  against hand-derived expectations (`tests/vic/`, `tests/machine/`)
+  **Bad lines**: real VIC-II hardware asserts `/RDY` (freezing the CPU)
+  whenever the raster line's low 3 bits match YSCROLL (`$D011` bits
+  0-2), the line is within `$30`-`$F7`, and DEN is set — `vic_tick()`
+  detects this on line-entry and sets a pending stall of
+  `VIC_BADLINE_STALL_CYCLES` (40, the standard cited figure, not
+  independently cycle-verified). Since `cpu.c` executes whole
+  instructions atomically with no way to interrupt one mid-flight, the
+  stall is its own dedicated `machine_step()` call:
+  `vic_take_badline_stall()` returns the pending amount and clears it;
+  if nonzero, that step ticks only the CIAs/VIC by that many cycles and
+  skips `cpu_step()` entirely, so the CPU makes zero progress that call
+  — verified directly (`tests/machine/`: PC and `cpu.cycles` genuinely
+  don't advance during a stall call). Deliberately still deferred:
+  multicolor/extended-background-color text modes, bitmap modes,
+  sprites, light pen — rendering still happens once per whole frame,
+  not scanline by scanline, so a raster IRQ handler that pokes
+  `$D020`/`$D021` mid-frame for a split-screen effect still won't show
+  up in the picture, even though bad lines now stall the CPU correctly
+  and raster IRQs fire at the right line. Verified against hand-derived
+  expectations (`tests/vic/`, `tests/machine/`)
   and, together with the CPU/memory/CIA modules it depends on, against
   real system software actually booting (`tests/boot/` — see below).
 - **Machine wiring** (`src/machine.c`/`src/machine.h` — replaces the ad

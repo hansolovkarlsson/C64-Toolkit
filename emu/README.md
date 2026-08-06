@@ -16,21 +16,23 @@ keyboard-matrix/joystick/IRQ-NMI wiring on top of it - real keyboard
 input reaches the machine, typing in the window feeds CIA1's keyboard
 matrix), and VIC-II (`src/vic.c` - real 40x25 hi-res text mode through
 screen RAM/character ROM/color RAM and whichever bank CIA2 selects, a
-solid border/background color, and now real raster IRQs too - CIA1 and
-VIC-II share the CPU's /IRQ line, matching real hardware). **This is
-enough to actually boot**: `tests/boot/` is an automated end-to-end
-gate that fetches a real open-source ROM replacement (the MEGA65
-`open-roms` project) and checks that the whole machine runs it
-unmodified all the way to a readable BASIC `READY.` prompt - the one
-test that exercises the CPU, memory map, both CIAs, and VIC-II
-together, not just each module in isolation. See `tests/cpu/README.md`,
+solid border/background color, real raster IRQs [CIA1 and VIC-II share
+the CPU's /IRQ line, matching real hardware], and bad lines [the
+cycle-stealing DMA quirk - the CPU genuinely stalls for
+`VIC_BADLINE_STALL_CYCLES` when one is entered]). **This is enough to
+actually boot**: `tests/boot/` is an automated end-to-end gate that
+fetches a real open-source ROM replacement (the MEGA65 `open-roms`
+project) and checks that the whole machine runs it unmodified all the
+way to a readable BASIC `READY.` prompt - the one test that exercises
+the CPU, memory map, both CIAs, and VIC-II together, not just each
+module in isolation. See `tests/cpu/README.md`,
 `tests/memory/README.md`, `tests/cia/README.md`, `tests/machine/README.md`,
 `tests/vic/README.md`, `tests/boot/README.md`, and this file's
-"Building" section below. No SID yet (no sound); no bad lines,
-multicolor/extended-background-color text modes, bitmap modes,
-sprites, or light pen yet either (see `vic.h`'s header comment for the
-full list of what's still deferred); no joystick wiring in the GTK
-shell yet even though `machine_set_joystick()` exists. See
+"Building" section below. No SID yet (no sound); no multicolor/
+extended-background-color text modes, bitmap modes, sprites, or light
+pen yet either (see `vic.h`'s header comment for the full list of
+what's still deferred); no joystick wiring in the GTK shell yet even
+though `machine_set_joystick()` exists. See
 [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
@@ -81,8 +83,8 @@ make clean
 The window drives the machine at ~50 Hz (PAL frame rate) and shows
 real VIC-II text-mode output - see `vic.h`'s header comment for
 exactly what's modeled (40x25 hi-res text, border/background color,
-DEN blanking, raster IRQs) versus deliberately deferred (bad lines,
-multicolor/bitmap modes, sprites). It runs fine with no ROMs loaded (the CPU just
+DEN blanking, raster IRQs, bad lines) versus deliberately deferred
+(multicolor/bitmap modes, sprites). It runs fine with no ROMs loaded (the CPU just
 executes a harmless BRK loop on zeroed memory, and the screen stays
 whatever color `$D021`/`$D020` default to), which is enough to see the
 window/event loop working before real ROMs are available - but with

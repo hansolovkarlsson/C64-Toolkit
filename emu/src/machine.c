@@ -115,22 +115,36 @@ void machine_reset(Machine *m) {
     cpu_reset(&m->cpu);
 }
 
-int machine_step(Machine *m) {
-    int cycles = cpu_step(&m->cpu);
-    cia_tick(&m->cia1, cycles);
-    cia_tick(&m->cia2, cycles);
-    vic_tick(&m->vic, cycles);
-
+static void update_interrupt_lines(Machine *m) {
     /* CIA1 and VIC-II raster IRQs share the CPU's /IRQ line on real
      * hardware (wired-OR) - level-triggered, so this can just be
-     * recomputed fresh every step rather than tracked incrementally. */
+     * recomputed fresh every call rather than tracked incrementally. */
     m->cpu.irq_line = cia_irq_line(&m->cia1) || vic_irq_line(&m->vic);
 
     /* CIA2 -> /NMI (edge-triggered, per cpu_nmi()'s own contract). */
     int nmi_now = cia_irq_line(&m->cia2);
     if (nmi_now && !m->cia2_nmi_prev) cpu_nmi(&m->cpu);
     m->cia2_nmi_prev = nmi_now;
+}
 
+int machine_step(Machine *m) {
+    /* A bad line freezes the CPU (real /RDY behavior - see
+     * vic_take_badline_stall()'s header comment) - if one is pending,
+     * this call makes zero CPU progress: only the CIAs/VIC tick. */
+    uint32_t stall = vic_take_badline_stall(&m->vic);
+    if (stall > 0) {
+        cia_tick(&m->cia1, (int)stall);
+        cia_tick(&m->cia2, (int)stall);
+        vic_tick(&m->vic, (int)stall);
+        update_interrupt_lines(m);
+        return (int)stall;
+    }
+
+    int cycles = cpu_step(&m->cpu);
+    cia_tick(&m->cia1, cycles);
+    cia_tick(&m->cia2, cycles);
+    vic_tick(&m->vic, cycles);
+    update_interrupt_lines(m);
     return cycles;
 }
 

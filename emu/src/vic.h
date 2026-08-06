@@ -6,14 +6,15 @@
 
 /* VIC-II (../ROADMAP.md steps 5-6): a free-running raster line
  * counter, standard 40x25 hi-res text mode, a solid border/background
- * color, and raster IRQs. Deliberately NOT implemented yet, each
- * explicitly left for a later pass per the roadmap: "bad lines" (the
- * cycle-stealing DMA quirk a lot of real software's timing depends
- * on) - rendering happens once per whole frame, not scanline-by-
- * scanline, so there's no notion of mid-frame raster effects at all
- * yet, even though raster IRQs themselves now fire at the right line
- * - plus multicolor/extended-background-color text modes, bitmap
- * modes, sprites, and light pen.
+ * color, raster IRQs, and bad lines (the cycle-stealing DMA quirk a
+ * lot of real software's raster-timed effects depend on - see
+ * vic_take_badline_stall()'s header comment for exactly what's
+ * modeled and what isn't). Rendering still happens once per whole
+ * frame, not scanline-by-scanline, so there's no notion of mid-frame
+ * raster EFFECTS yet even though the underlying timing (raster IRQs,
+ * bad-line CPU stalls) is now real. Deliberately not implemented yet:
+ * multicolor/extended-background-color text modes, bitmap modes,
+ * sprites, and light pen.
  *
  * PAL timing: 63 cycles/line, 312 lines/frame (see PAL_CYCLES_PER_LINE/
  * PAL_LINES_PER_FRAME) - matches gtk/main.c's own PAL frame-cycle
@@ -25,10 +26,17 @@ typedef struct {
 
     uint32_t raster_cycle;  /* 0..(PAL_CYCLES_PER_LINE*PAL_LINES_PER_FRAME - 1), advanced by vic_tick() */
     uint16_t raster_compare; /* 0-311: the raster line $D011 bit7 + $D012 last had written to them - vic_tick() sets $D019 bit0 pending the instant the live raster line reaches this value */
+    uint32_t badline_stall_cycles; /* >0 right after entering a bad line, until vic_take_badline_stall() consumes it - see that function's header comment */
 } Vic;
 
 #define PAL_CYCLES_PER_LINE 63
 #define PAL_LINES_PER_FRAME 312
+
+/* The standard, widely-cited figure (c64-wiki, VICE, Christian Bauer's
+ * VIC-II article) for how many PHI2 cycles a bad line steals from the
+ * CPU - not independently re-derived or cycle-verified against real
+ * hardware by this project. */
+#define VIC_BADLINE_STALL_CYCLES 40
 
 #define VIC_TEXT_COLS 40
 #define VIC_TEXT_ROWS 25
@@ -82,8 +90,42 @@ void vic_color_ram_write(Vic *vic, uint16_t addr, uint8_t v);
  * $D011/$D012 reflect a real, continuously-changing value instead of
  * an inert placeholder (this is specifically what real KERNAL/BASIC
  * boot code polls to detect the passage of time before CIA/VIC
- * interrupts are even set up - see emu/ROADMAP.md's step 5 entry). */
+ * interrupts are even set up - see emu/ROADMAP.md's step 5 entry).
+ * `cycles` must be small relative to PAL_CYCLES_PER_LINE (in practice
+ * always one CPU instruction's worth, 2-7, or one bad-line stall's
+ * worth, VIC_BADLINE_STALL_CYCLES - both comfortably under 63) - the
+ * raster-IRQ and bad-line detection below only checks for crossing
+ * ONE line boundary per call, not several. */
 void vic_tick(Vic *vic, int cycles);
+
+/* Returns the pending bad-line stall amount (0 if none) and clears it
+ * - call this FIRST, before cpu_step(), once per machine_step(). If it
+ * returns nonzero, skip calling cpu_step() entirely for that
+ * machine_step() call and tick the CIAs/VIC by the returned amount
+ * instead - the CPU makes zero progress, simulating a real bad line's
+ * /RDY stall (the VIC-II halting the CPU to fetch a whole line's
+ * worth of screen/color RAM data at once).
+ *
+ * Set internally by vic_tick() the instant a bad line is entered: real
+ * VIC-II hardware asserts /RDY whenever the raster line's low 3 bits
+ * match YSCROLL ($D011 bits 0-2), the line is within $30-$F7, and DEN
+ * is set - this is genuine VIC-II chip behavior, not a C64-specific
+ * wiring quirk (contrast with machine.c's keyboard-matrix handling),
+ * which is why it lives here rather than in machine.c.
+ *
+ * NOT modeled: the exact real timing of when within the line the
+ * stall starts (real hardware: partway through, around cycle 12-17)
+ * or DEN's real per-line latch behavior (real hardware samples DEN at
+ * a specific cycle each line, not continuously) - this checks DEN's
+ * current value at the instant the line is detected as entered
+ * instead. The whole stall is applied in one lump at that instant,
+ * delaying whatever instruction would have executed next by up to
+ * VIC_BADLINE_STALL_CYCLES rather than truly interrupting the CPU
+ * mid-instruction - cpu.c executes whole instructions atomically and
+ * has no mechanism to pause mid-flight, so this is the closest
+ * approximation available without rearchitecting it into a true
+ * cycle-stepped core. */
+uint32_t vic_take_badline_stall(Vic *vic);
 
 /* Renders one whole frame into `pixels` (0x00RRGGBB per pixel,
  * VIC_CANVAS_W x VIC_CANVAS_H, top-left origin, row stride given in

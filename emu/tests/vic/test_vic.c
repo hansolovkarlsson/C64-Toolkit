@@ -65,6 +65,33 @@ static void test_raster_irq(void) {
     CHECK(vic_irq_line(&vic) != 0, "raster IRQ: should fire again once line 5 comes around on the next frame");
 }
 
+static void test_bad_lines(void) {
+    Vic vic;
+    vic_init(&vic);
+    vic_write(&vic, REG_D011, 0x10); /* DEN=1, YSCROLL=0 */
+
+    for (int line = 0; line < 48; line++) vic_tick(&vic, PAL_CYCLES_PER_LINE); /* -> line 48 ($30), the bottom edge of the window; 48 & 7 == 0 == YSCROLL */
+    CHECK(vic_take_badline_stall(&vic) == VIC_BADLINE_STALL_CYCLES,
+          "bad lines: entering line $30 (48) with matching YSCROLL should stall the CPU");
+    CHECK(vic_take_badline_stall(&vic) == 0, "bad lines: the stall should only be reported once, then clear");
+
+    Vic vic_no_den;
+    vic_init(&vic_no_den);
+    vic_write(&vic_no_den, REG_D011, 0x00); /* DEN=0, YSCROLL=0 - otherwise identical to the case above */
+    for (int line = 0; line < 48; line++) vic_tick(&vic_no_den, PAL_CYCLES_PER_LINE);
+    CHECK(vic_take_badline_stall(&vic_no_den) == 0, "bad lines: DEN=0 should suppress the stall even with a matching line/YSCROLL");
+
+    Vic vic_outside;
+    vic_init(&vic_outside);
+    vic_write(&vic_outside, REG_D011, 0x10); /* DEN=1, YSCROLL=0 */
+    for (int line = 0; line < 240; line++) vic_tick(&vic_outside, PAL_CYCLES_PER_LINE); /* -> line 240 ($F0): still inside the window */
+    CHECK(vic_take_badline_stall(&vic_outside) == VIC_BADLINE_STALL_CYCLES,
+          "bad lines: sanity check - line $F0 (240) is still inside the $30-$F7 window and should stall");
+    for (int line = 0; line < 8; line++) vic_tick(&vic_outside, PAL_CYCLES_PER_LINE); /* -> line 248 ($F8): matching YSCROLL again, but past the window's top edge */
+    CHECK(vic_take_badline_stall(&vic_outside) == 0,
+          "bad lines: a matching YSCROLL just outside the $30-$F7 window ($F8/248) should not stall");
+}
+
 static void test_den_blanks_to_border(void) {
     Vic vic;
     Memory mem;
@@ -149,6 +176,7 @@ static void test_color_ram_nibble_masking(void) {
 int main(void) {
     test_raster_counter();
     test_raster_irq();
+    test_bad_lines();
     test_den_blanks_to_border();
     test_text_rendering_from_ram();
     test_char_rom_visibility_quirk();

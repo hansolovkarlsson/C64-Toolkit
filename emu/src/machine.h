@@ -47,14 +47,17 @@ int machine_load_roms(Machine *m, const char *dir);
 
 void machine_reset(Machine *m);
 
-/* Executes exactly one CPU instruction (or services a pending IRQ/NMI,
- * same as cpu_step()), ticks both CIAs and the VIC by that many
- * cycles, and updates the CPU's IRQ/NMI lines: CIA1 and VIC-II raster
- * IRQs both feed /IRQ (real hardware wired-OR), CIA2 feeds /NMI.
- * Returns the cycle count, same as cpu_step(). Callers driving a whole
- * video frame's worth of execution (e.g. gtk/main.c) should call this
- * in a loop rather than calling cpu_step() directly - ticking the CIAs
- * only once per frame, in a single large batch, would make their
+/* Normally: executes exactly one CPU instruction (or services a
+ * pending IRQ/NMI, same as cpu_step()), ticks both CIAs and the VIC by
+ * that many cycles, and updates the CPU's IRQ/NMI lines: CIA1 and
+ * VIC-II raster IRQs both feed /IRQ (real hardware wired-OR), CIA2
+ * feeds /NMI. On a bad line instead (see vic_take_badline_stall()):
+ * cpu_step() isn't called at all - the CPU makes zero progress this
+ * call, only the CIAs/VIC tick, simulating a real /RDY stall. Either
+ * way, returns the cycle count actually consumed. Callers driving a
+ * whole video frame's worth of execution (e.g. gtk/main.c) should call
+ * this in a loop rather than calling cpu_step() directly - ticking the
+ * CIAs only once per frame, in a single large batch, would make their
  * timers grossly imprecise and could miss interrupts entirely. */
 int machine_step(Machine *m);
 
