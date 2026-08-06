@@ -145,7 +145,7 @@ cd emu
 make                       # -> bin/c64emu (needs GTK4 AND SDL2 dev libs, e.g. `brew install gtk4 sdl2`)
 make clean
 
-./bin/c64emu [rom-dir]     # rom-dir defaults to "roms"; runs fine with 0/3 ROMs loaded
+./bin/c64emu [rom-dir] [--prg PATH]     # rom-dir defaults to "roms"; runs fine with 0/3 ROMs loaded; --prg auto-runs a c64asm-built .prg once boot reaches READY.
 ```
 
 Each core module also has its own standalone correctness gate,
@@ -656,6 +656,30 @@ emulation are explicitly out of scope for now.
   failure as "something in the CPU/memory/CIA/VIC-II integration broke,
   go check each module's own suite to narrow it down," not as its own
   root cause.
+- **Running `asm/`'s example programs** (`gtk/main.c`'s `--prg PATH`
+  flag, `machine_load_prg()`/`machine_find_sys_target()` in
+  `machine.c`): loads a c64asm-built `.prg` straight into RAM and jumps
+  the CPU to its BASIC stub's `SYS` target once boot reaches a real
+  READY. prompt — the same shortcut `asm/examples/mini6502.py`'s own
+  loader takes to run c64asm's output without a real 1541 disk drive
+  (not implemented), except this waits for READY. first rather than
+  injecting immediately after reset, since real hardware can only
+  LOAD+RUN once BASIC/KERNAL's own startup (IRQ vectors, CIA timer
+  setup) has actually run. Verified by spot-checking `asm/examples/`
+  demos this way and dumping `vic_render_frame()`'s output to an image
+  rather than relying on a live window (no screen-recording access in
+  this development sandbox): `pong.prg` (paddle/ball/net sprites and
+  score text, all correct — the first real, substantial program to
+  exercise this session's sprite work, not just this project's own
+  hand-derived unit tests), `bounce.prg`, `lander.prg` (bitmap-mode
+  terrain), `sprites.prg`, and `music_demo.prg` — all ran correctly
+  using real KERNAL routines like `CHROUT` (unlike `mini6502.py`, which
+  traps those instead of executing real ROM code). Not a permanent
+  automated suite — `asm/examples/test_*.py`'s 15 scripts each drive
+  real win-conditions against `mini6502.py` and would need redoing
+  against this emulator's own `machine_set_key()`/
+  `machine_set_joystick()` API for equivalent coverage; this was a
+  one-off manual verification pass, see `emu/ROADMAP.md`.
 
 ### Cross-project test harness: `mini6502.py`
 

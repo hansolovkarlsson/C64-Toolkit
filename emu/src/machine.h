@@ -54,6 +54,33 @@ void machine_init(Machine *m);
 /* Forwards to memory_load_roms() - see roms/README.md for expected files/sizes. */
 int machine_load_roms(Machine *m, const char *dir);
 
+/* Loads a .prg file (2-byte little-endian load address header followed
+ * by raw bytes) into RAM at that address - the same shortcut
+ * asm/examples/mini6502.py's own load_prg() takes to run c64asm's
+ * output directly, without a real 1541 disk drive (not implemented -
+ * see ../ROADMAP.md's "Not yet scheduled"). Each byte goes through
+ * memory_write(), so it lands in real RAM the same way a real KERNAL
+ * LOAD's writes would even if ROM/IO currently happens to be banked in
+ * for reads at the same address ("write under ROM", see memory.c) -
+ * not that it should matter for the addresses these demos actually
+ * load at, but it's the technically correct write path regardless.
+ * Returns the load address, or 0 (never a valid load address for a
+ * BASIC-loadable .prg) if the file couldn't be read. */
+uint16_t machine_load_prg(Machine *m, const char *path);
+
+/* Parses a ".basic" BASIC-loader stub already sitting in RAM at
+ * load_addr (see machine_load_prg()) for its tokenized "SYS n" line,
+ * to find a program's real machine-code entry point - the same
+ * shortcut asm/examples/mini6502.py's find_sys_target() takes, so a
+ * caller can jump the CPU straight there (m->cpu.pc = the returned
+ * address) instead of simulating typing RUN through the real BASIC
+ * interpreter. Only recognizes the exact stub shape c64asm's own
+ * `.basic` directive emits (load_addr must be $0801, immediately
+ * followed by a next-line pointer, a line number, and a literal SYS
+ * token, in that order) - not a general BASIC tokenizer. Returns 0 if
+ * that shape isn't found. */
+uint16_t machine_find_sys_target(const Machine *m, uint16_t load_addr);
+
 void machine_reset(Machine *m);
 
 /* Normally: executes exactly one CPU instruction (or services a

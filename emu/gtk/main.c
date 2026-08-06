@@ -24,12 +24,22 @@
  * thread that ever touches Sid) into SDL's own separate real-time
  * audio thread without a data race. Never fatal if it fails to open -
  * the emulator just runs silently, the same as running with 0/3 ROMs.
+ *
+ * Optional --prg PATH: auto-runs a c64asm-built .prg (e.g. one of the
+ * demos under ../../asm/examples/) once boot reaches a real READY. prompt -
+ * see try_inject_prg(). This is c64asm's own toolchain output running
+ * against a real, general-purpose emulator rather than asm/examples/'s
+ * own mini6502.py test harness, so this is where things like real
+ * VIC-II sprite/bitmap rendering and real SID audio actually get
+ * exercised end-to-end, not just each chip's own hand-derived unit
+ * tests.
  */
 
 #include <gtk/gtk.h>
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "../src/machine.h"
 
 /* PAL C64: ~985248 Hz CPU clock, ~50.12 Hz frame rate -> 19656
@@ -79,6 +89,14 @@ typedef struct {
     double sample_cycle_accum; /* fractional SID clock cycles owed toward the next sample - see tick() */
     int16_t audio_ring[AUDIO_RING_SAMPLES];
     int audio_ring_read, audio_ring_write, audio_ring_count;
+
+    /* Optional --prg PATH (see main()): a .prg to auto-inject and jump
+     * straight into once boot reaches READY. - see tick()'s own
+     * comment for why it waits for that rather than injecting
+     * immediately. prg_state tracks progress so this only ever
+     * happens once per run. */
+    const char *prg_path;
+    enum { PRG_NONE, PRG_PENDING, PRG_DONE } prg_state;
 } App;
 
 /* GDK keyval -> C64 keyboard matrix (pa_bit selects the column CIA1's
@@ -202,8 +220,54 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     }
 }
 
+/* "READY." in C64 screen codes, NOT PETSCII/ASCII (screen RAM stores
+ * screen codes - see c64-memory-reference.md if this ever needs
+ * extending): R=$12 E=$05 A=$01 D=$04 Y=$19 .=$2E - identical check to
+ * ../tests/boot/test_boot.c's own screen_has_ready(), duplicated here
+ * rather than shared since that's a standalone CI check and this is
+ * the interactive shell polling once per frame - they have no reason
+ * to stay in lockstep. */
+static const uint8_t READY_SCREEN_CODES[] = {0x12, 0x05, 0x01, 0x04, 0x19, 0x2E};
+
+static int screen_has_ready(Machine *m) {
+    for (int i = 0; i <= 1000 - 6; i++) {
+        int match = 1;
+        for (int j = 0; j < 6; j++) {
+            if (memory_read(&m->mem, (uint16_t)(0x0400 + i + j)) != READY_SCREEN_CODES[j]) { match = 0; break; }
+        }
+        if (match) return 1;
+    }
+    return 0;
+}
+
+/* Waits for a real READY. prompt before injecting --prg (see main())
+ * rather than doing it immediately after reset: a real C64 can only
+ * LOAD+RUN a program once BASIC/KERNAL have finished their own startup
+ * (clearing the screen, setting up IRQ vectors and CIA timers for the
+ * jiffy clock, etc.) - jumping into a demo before any of that ran would
+ * leave it relying on KERNAL-standard state that was simply never set
+ * up, the same class of bug as skipping the boot sequence entirely.
+ * Loads the file, finds its BASIC stub's SYS target the shortcut way
+ * (see machine_find_sys_target()'s own comment - no simulated typing of
+ * RUN, no real BASIC tokenizing), and jumps the CPU straight there. */
+static void try_inject_prg(App *app) {
+    if (app->prg_state != PRG_PENDING) return;
+    if (!screen_has_ready(&app->machine)) return;
+
+    uint16_t load_addr = machine_load_prg(&app->machine, app->prg_path);
+    uint16_t sys_target = load_addr ? machine_find_sys_target(&app->machine, load_addr) : 0;
+    if (sys_target == 0) {
+        fprintf(stderr, "--prg %s: couldn't find a BASIC-stub SYS target to jump to (not a .basic-style c64asm .prg?)\n", app->prg_path);
+    } else {
+        fprintf(stderr, "--prg %s: loaded at $%04X, jumping to $%04X\n", app->prg_path, load_addr, sys_target);
+        app->machine.cpu.pc = sys_target;
+    }
+    app->prg_state = PRG_DONE; /* either way - don't keep retrying every frame */
+}
+
 static gboolean tick(gpointer user_data) {
     App *app = user_data;
+    try_inject_prg(app);
     int budget = CYCLES_PER_FRAME;
     while (budget > 0) {
         int cycles = machine_step(&app->machine);
@@ -325,13 +389,25 @@ int main(int argc, char **argv) {
     App app = {0}; /* zeroes audio_dev/sample_cycle_accum/audio_ring_* too - see tick()'s use of them */
     machine_init(&app.machine);
 
-    /* Optional first arg overrides the ROM directory (default: "roms",
-     * matching ../roms/README.md, resolved relative to cwd - run from
-     * emu/ unless a path is given). Missing ROMs aren't fatal here
-     * either: machine_load_roms() reports how many loaded, and the CPU
-     * will just execute zeroed memory (a harmless BRK loop) if none
-     * did - fine for proving the display/event loop on its own. */
-    const char *rom_dir = argc > 1 ? argv[1] : "roms";
+    /* Optional positional arg overrides the ROM directory (default:
+     * "roms", matching ../roms/README.md, resolved relative to cwd -
+     * run from emu/ unless a path is given). Missing ROMs aren't fatal
+     * here either: machine_load_roms() reports how many loaded, and
+     * the CPU will just execute zeroed memory (a harmless BRK loop) if
+     * none did - fine for proving the display/event loop on its own.
+     * Optional --prg PATH: a c64asm-built .prg (e.g. from
+     * ../../asm/examples/) to auto-run once boot reaches READY. - see
+     * try_inject_prg(). Simple manual parsing rather than getopt: this
+     * is the only flag there is. */
+    const char *rom_dir = "roms";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--prg") == 0 && i + 1 < argc) {
+            app.prg_path = argv[++i];
+            app.prg_state = PRG_PENDING;
+        } else {
+            rom_dir = argv[i];
+        }
+    }
     int loaded = machine_load_roms(&app.machine, rom_dir);
     fprintf(stderr, "loaded %d/3 ROMs from %s\n", loaded, rom_dir);
 

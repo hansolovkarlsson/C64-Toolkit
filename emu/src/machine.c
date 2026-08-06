@@ -14,6 +14,7 @@
  */
 
 #include "machine.h"
+#include <stdio.h>
 #include <string.h>
 
 static void update_keyboard_pins(Machine *m) {
@@ -117,6 +118,49 @@ void machine_init(Machine *m) {
 
 int machine_load_roms(Machine *m, const char *dir) {
     return memory_load_roms(&m->mem, dir);
+}
+
+uint16_t machine_load_prg(Machine *m, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+
+    uint8_t header[2];
+    if (fread(header, 1, 2, f) != 2) {
+        fclose(f);
+        return 0;
+    }
+    uint16_t load_addr = (uint16_t)(header[0] | (header[1] << 8));
+
+    uint16_t addr = load_addr;
+    int byte;
+    while ((byte = fgetc(f)) != EOF) {
+        memory_write(&m->mem, addr, (uint8_t)byte);
+        addr++; /* wraps $FFFF -> $0000, matching real address-space wraparound - a file long enough to hit it would corrupt itself the same way on real hardware */
+    }
+    fclose(f);
+    return load_addr;
+}
+
+uint16_t machine_find_sys_target(const Machine *m, uint16_t load_addr) {
+    if (load_addr != 0x0801) return 0;
+
+    /* Stub layout after the load address: [next-line ptr, 2 bytes]
+     * [line number, 2 bytes][$9E "SYS" token][ASCII digits...][$00] -
+     * see machine_find_sys_target()'s own doc comment in machine.h. */
+    uint16_t idx = (uint16_t)(load_addr + 4);
+    if (m->mem.ram[idx] != 0x9E) return 0;
+    idx++;
+
+    uint16_t target = 0;
+    int saw_digit = 0;
+    while (m->mem.ram[idx] != 0x00) {
+        uint8_t c = m->mem.ram[idx];
+        if (c < '0' || c > '9') return 0;
+        target = (uint16_t)(target * 10 + (c - '0'));
+        saw_digit = 1;
+        idx++;
+    }
+    return saw_digit ? target : 0;
 }
 
 void machine_reset(Machine *m) {

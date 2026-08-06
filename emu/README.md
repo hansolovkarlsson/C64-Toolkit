@@ -89,8 +89,19 @@ emu/
 make            # -> bin/c64emu (requires GTK4 AND SDL2 dev libraries, e.g. `brew install gtk4 sdl2`)
 make clean
 
-./bin/c64emu [rom-dir]   # rom-dir defaults to "roms" (see "ROM images" below)
+./bin/c64emu [rom-dir] [--prg PATH]   # rom-dir defaults to "roms" (see "ROM images" below)
 ```
+
+`--prg PATH` auto-runs a c64asm-built `.prg` (e.g. one of the demos
+under `../asm/examples/`, like `../asm/examples/pong.prg`) once boot
+reaches a real READY. prompt - injected straight into RAM and jumped
+to via its BASIC stub's `SYS` target, the same shortcut
+`asm/examples/mini6502.py`'s own loader takes rather than needing a
+real 1541 disk drive (not implemented). Unlike `mini6502.py` (which
+has no real VIC-II/SID emulation, just CHROUT/CHRIN trapping), this
+runs a demo's real KERNAL calls, sprites, bitmap graphics, and SID
+audio for real - see `ROADMAP.md`'s "Running `asm/`'s example
+programs" for what's been verified this way so far.
 
 The window drives the machine at ~50 Hz (PAL frame rate) and shows
 real VIC-II output - see `vic.h`'s header comment for exactly what's

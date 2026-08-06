@@ -345,6 +345,43 @@ each piece will live.
      for a specific piece of software being tested against, same
      deferral reasoning as VIC-II's own approximations.
 
+## Running `asm/`'s example programs
+
+~~Done~~: `gtk/main.c`'s `--prg PATH` flag (`machine_load_prg()`/
+`machine_find_sys_target()` in `machine.c`) loads a c64asm-built `.prg`
+straight into RAM and jumps the CPU to its BASIC stub's `SYS` target,
+the same shortcut `asm/examples/mini6502.py`'s own `load_prg()`/
+`find_sys_target()` already take to run c64asm's output without a real
+1541 disk drive (not implemented - see "Not yet scheduled" below).
+Unlike that shortcut, injection waits for a real READY. prompt first
+(polling screen RAM every frame, the same check `tests/boot/` uses) -
+real hardware can only LOAD+RUN once BASIC/KERNAL have finished their
+own startup (IRQ vectors, CIA timer setup for the jiffy clock, etc.),
+and jumping in earlier would leave a demo relying on KERNAL-standard
+state that was simply never set up. This is c64asm's own toolchain
+output running against a real, general-purpose emulator rather than
+`asm/examples/`'s own `mini6502.py` harness (which has no real VIC-II
+or SID emulation at all, just CHROUT/CHRIN trapping - see
+`README.md`'s "Why this exists" section) - the first time this
+project's sprite/bitmap-mode rendering and SID audio have been
+exercised by real, substantial, previously-existing programs rather
+than this project's own hand-derived unit tests. Spot-checked (by
+dumping `vic_render_frame()`'s output to an image rather than relying
+on a live GTK window, since this development sandbox has no screen-
+recording access) against `pong.prg` (paddle/ball/net sprites and
+score text, all correct), `bounce.prg` (sprite rendering), `lander.prg`
+(bitmap-mode terrain), `sprites.prg`, and `music_demo.prg` (the latter
+two correctly stopped at their own "press any key" prompts, since
+nothing drives keyboard input in a headless snapshot) - all loaded and
+ran without crashing, using real KERNAL routines like `CHROUT` for the
+first time (`mini6502.py` traps those instead of executing real ROM
+code). Not a permanent automated regression suite the way
+`asm/examples/test_*.py` is against `mini6502.py` - each of those 15
+scripts programmatically drives real win-conditions and would need
+redoing against this emulator's own input-injection API
+(`machine_set_key()`/`machine_set_joystick()`) to get the same
+coverage; this was a one-off manual verification pass instead.
+
 ## Not yet scheduled
 
 - **Light pen** - a peripheral vanishingly few pieces of C64 software
