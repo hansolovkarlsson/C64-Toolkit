@@ -156,6 +156,58 @@ static void test_mcm_bit3_clear_stays_hires(void) {
     CHECK(ok, "MCM on but color RAM bit3 clear: cell should still render plain hi-res (per-pixel), not multicolor pixel-pairs");
 }
 
+static void test_standard_bitmap_mode(void) {
+    Vic vic;
+    Memory mem;
+    vic_init(&vic);
+    memory_init(&mem);
+
+    vic_write(&vic, REG_D011, 0x30); /* DEN | BMM */
+    vic_write(&vic, REG_D016, 0x00); /* MCM off - standard (2-color) bitmap mode */
+    vic_write(&vic, REG_D018, 0x10); /* screen ptr -> $0400, bitmap bit3=0 -> bitmap at bank+$0000 */
+
+    mem.ram[0x0400] = 0x51; /* this cell's 2 colors: upper nibble=5 (green) for set bits, lower nibble=1 (white) for clear bits */
+    /* Same 10110100 pattern used for the hi-res-text/MCM-off test - deliberately not symmetric, so a wrong bit order or wrong color source shows up immediately. */
+    mem.ram[0x0000] = 0xB4;
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row0 = &pixels[VIC_BORDER_Y * VIC_CANVAS_W + VIC_BORDER_X];
+
+    uint32_t fg = 0x588D43, bg = 0xFFFFFF; /* palette[5], palette[1] */
+    uint32_t expected[8] = {fg, bg, fg, fg, bg, fg, bg, bg};
+    int ok = 1;
+    for (int i = 0; i < 8; i++) {
+        if (row0[i] != expected[i]) ok = 0;
+    }
+    CHECK(ok, "standard bitmap mode: pixels should come from the bitmap byte, colors from screen RAM's nibbles (upper=set bits, lower=clear bits), not color RAM");
+}
+
+static void test_multicolor_bitmap_mode(void) {
+    Vic vic;
+    Memory mem;
+    vic_init(&vic);
+    memory_init(&mem);
+
+    vic_write(&vic, REG_D011, 0x30); /* DEN | BMM */
+    vic_write(&vic, REG_D016, 0x10); /* MCM on - multicolor bitmap mode */
+    vic_write(&vic, REG_D018, 0x10); /* screen ptr -> $0400, bitmap bit3=0 -> bitmap at bank+$0000 */
+    vic_write(&vic, REG_D021, 0);    /* background color 0 = black */
+
+    mem.ram[0x0400] = 0x51; /* screen RAM nibbles: upper=5 (green), lower=1 (white) - the '01'/'10' pixel-pair colors here, NOT a 2-color bitmap byte */
+    mem.ram[0x0000] = 0x1B; /* 00 01 10 11 - one of each pixel-pair value */
+    vic_color_ram_write(&vic, 0, 3); /* color RAM = cyan (index 3) - the '11' pixel-pair color */
+
+    static uint32_t pixels[VIC_CANVAS_H * VIC_CANVAS_W];
+    vic_render_frame(&vic, &mem, 0, pixels, VIC_CANVAS_W);
+    uint32_t *row0 = &pixels[VIC_BORDER_Y * VIC_CANVAS_W + VIC_BORDER_X];
+
+    CHECK(row0[0] == 0x000000 && row0[1] == 0x000000, "multicolor bitmap: pixel-pair '00' should render background color 0 ($D021), 2 pixels wide");
+    CHECK(row0[2] == 0x588D43 && row0[3] == 0x588D43, "multicolor bitmap: pixel-pair '01' should render screen RAM's upper nibble, 2 pixels wide");
+    CHECK(row0[4] == 0xFFFFFF && row0[5] == 0xFFFFFF, "multicolor bitmap: pixel-pair '10' should render screen RAM's lower nibble, 2 pixels wide");
+    CHECK(row0[6] == 0x70A4B2 && row0[7] == 0x70A4B2, "multicolor bitmap: pixel-pair '11' should render color RAM's low nibble, 2 pixels wide");
+}
+
 static void test_den_blanks_to_border(void) {
     Vic vic;
     Memory mem;
@@ -243,6 +295,8 @@ int main(void) {
     test_bad_lines();
     test_multicolor_text_mode();
     test_mcm_bit3_clear_stays_hires();
+    test_standard_bitmap_mode();
+    test_multicolor_bitmap_mode();
     test_den_blanks_to_border();
     test_text_rendering_from_ram();
     test_char_rom_visibility_quirk();

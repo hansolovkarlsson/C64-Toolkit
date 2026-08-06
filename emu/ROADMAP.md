@@ -171,15 +171,37 @@ each piece will live.
      expectations for all 4 pixel-pair values and for the bit3=0
      fallback genuinely taking the hi-res code path, not just happening
      to produce the same pixels (`tests/vic/`).
-   - Extended-background-color text mode, bitmap modes, sprites, and
-     light pen - not started. Also where real border geometry
-     (currently a fixed, plausible-looking approximation - see
-     `vic.h`) and scanline-by-scanline rendering (instead of one whole
-     frame per `vic_render_frame()` call) would need to land, if either
-     turns out to matter for real software being tested against - bad
-     lines now stall the CPU correctly, but a raster IRQ handler that
-     pokes `$D020`/`$D021` mid-frame for a split-screen effect still
-     won't show up in the picture, since rendering itself is still
+   - ~~Bitmap modes~~ - done: BMM (`$D011` bit5) switches from text mode
+     to bitmap mode entirely - a different memory layout, not a variant
+     of text mode's. Screen RAM holds per-CELL color info directly
+     instead of a character code (no character-code indirection, and no
+     character ROM involved at all - that's text-mode-only); `$D018`'s
+     char/bitmap-pointer field only uses its bit3 in bitmap mode (bits
+     1-2 are ignored) to pick the bitmap data's `$0000`/`$2000` offset
+     within the VIC bank. Standard bitmap (MCM=0): each cell's own
+     screen-RAM byte holds its 2 colors directly (upper nibble for set
+     bits, lower for clear) - color RAM isn't used at all. Multicolor
+     bitmap (MCM=1): each 2-bit pixel-pair picks one of 4 colors -
+     `$D021`, screen RAM's upper nibble, screen RAM's lower nibble, or
+     color RAM's low nibble - a different color-source list than
+     multicolor TEXT mode's (which uses `$D022`/`$D023`, not screen
+     RAM, and is otherwise unrelated even though both are "multicolor").
+     Refactored the shared hi-res/multicolor pixel-writing logic (which
+     text and bitmap modes both use identically) into one `render_cell()`
+     helper in `vic.c`, rather than duplicating it a second time.
+     Verified against hand-derived expectations for both bitmap
+     sub-modes, using a real per-cell byte pattern for the standard
+     case and all 4 pixel-pair values for the multicolor case
+     (`tests/vic/`).
+   - Extended-background-color text mode, sprites, and light pen - not
+     started. Also where real border geometry (currently a fixed,
+     plausible-looking approximation - see `vic.h`) and scanline-by-
+     scanline rendering (instead of one whole frame per
+     `vic_render_frame()` call) would need to land, if either turns out
+     to matter for real software being tested against - bad lines now
+     stall the CPU correctly, but a raster IRQ handler that pokes
+     `$D020`/`$D021` mid-frame for a split-screen effect still won't
+     show up in the picture, since rendering itself is still
      once-per-frame.
 7. **SID** - the 3-voice synth (square/triangle/sawtooth/noise
    generators, ADSR envelopes) without exact analog filter modeling

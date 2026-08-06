@@ -123,12 +123,41 @@ static void fill_rect(uint32_t *pixels, int stride, int x0, int y0, int w, int h
     }
 }
 
+/* Renders one 8x8 cell's 8 pixel-data bytes (`glyph`, 8 contiguous
+ * bytes - a character ROM/RAM glyph in text mode, a bitmap-memory cell
+ * in bitmap mode, both addressed identically per-cell either way) at
+ * (px0,py0). Shared between text and bitmap modes below since both use
+ * the exact same two pixel encodings, just with different color
+ * sources: plain hi-res (1 bit -> 1 pixel, `fg`/`bg`) or multicolor
+ * (2-bit pairs -> 1 of `mc_colors`, each pair covering 2 real pixels -
+ * multicolor halves horizontal resolution either way). */
+static void render_cell(uint32_t *pixels, int stride, int px0, int py0, const uint8_t *glyph,
+                         int multicolor, const uint32_t mc_colors[4], uint32_t fg, uint32_t bg) {
+    for (int line = 0; line < 8; line++) {
+        uint8_t bits = glyph[line];
+        uint32_t *prow = pixels + (size_t)(py0 + line) * (size_t)stride + px0;
+        if (multicolor) {
+            for (int pair = 0; pair < 4; pair++) {
+                uint8_t val = (bits >> (6 - pair * 2)) & 0x03;
+                uint32_t c = mc_colors[val];
+                prow[pair * 2] = c;
+                prow[pair * 2 + 1] = c;
+            }
+        } else {
+            for (int px = 0; px < 8; px++) {
+                prow[px] = (bits & (0x80 >> px)) ? fg : bg;
+            }
+        }
+    }
+}
+
 void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixels, int stride) {
     uint32_t border_color = VIC_PALETTE[vic->regs[REG_D020] & 0x0F];
     uint32_t bg_color = VIC_PALETTE[vic->regs[REG_D021] & 0x0F];
     uint32_t bg1_color = VIC_PALETTE[vic->regs[REG_D022] & 0x0F];
     uint32_t bg2_color = VIC_PALETTE[vic->regs[REG_D023] & 0x0F];
     int mcm = (vic->regs[REG_D016] & 0x10) != 0;
+    int bmm = (vic->regs[REG_D011] & 0x20) != 0;
 
     fill_rect(pixels, stride, 0, 0, VIC_CANVAS_W, VIC_CANVAS_H, border_color);
 
@@ -141,6 +170,40 @@ void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixel
     uint16_t bank_base = (uint16_t)(bank * 0x4000);
     uint8_t mem_ptrs = vic->regs[REG_D018];
     uint16_t screen_base = (uint16_t)(bank_base + ((mem_ptrs >> 4) & 0x0F) * 0x400);
+
+    if (bmm) {
+        /* Bitmap mode ($D011 bit5): $D018's bit3 alone selects the
+         * bitmap's base offset within the VIC bank (bits1-2 of that
+         * same field are ignored here - they only mean "character
+         * pointer" in text mode). Screen RAM still uses the normal
+         * screen pointer, but holds per-CELL color info instead of
+         * character codes: standard bitmap mode uses its upper/lower
+         * nibbles directly as that cell's two colors; multicolor
+         * bitmap mode uses them as 2 of its 4 pixel-pair colors. No
+         * character ROM involved in bitmap mode at all - the bitmap
+         * data is addressed directly by cell position, there's no
+         * character-code indirection to substitute ROM for. */
+        uint16_t bitmap_base = (uint16_t)(bank_base + ((mem_ptrs & 0x08) ? 0x2000 : 0x0000));
+
+        for (int row = 0; row < VIC_TEXT_ROWS; row++) {
+            for (int col = 0; col < VIC_TEXT_COLS; col++) {
+                uint16_t cell = (uint16_t)(row * VIC_TEXT_COLS + col);
+                uint8_t screen_byte = mem->ram[(uint16_t)(screen_base + cell)];
+                uint32_t fg_color = VIC_PALETTE[(screen_byte >> 4) & 0x0F];
+                uint32_t cell_bg_color = VIC_PALETTE[screen_byte & 0x0F];
+                /* Real hardware pixel-pair order for multicolor bitmap
+                 * mode - NOT the same source list as multicolor text
+                 * mode's (which uses $D022/$D023, not screen RAM). */
+                uint32_t mc_colors[4] = {bg_color, fg_color, cell_bg_color, VIC_PALETTE[vic->color_ram[cell] & 0x0F]};
+
+                const uint8_t *bmp = &mem->ram[(uint16_t)(bitmap_base + cell * 8)];
+                render_cell(pixels, stride, VIC_BORDER_X + col * 8, VIC_BORDER_Y + row * 8,
+                            bmp, mcm, mc_colors, fg_color, cell_bg_color);
+            }
+        }
+        return;
+    }
+
     uint8_t char_ptr_bits = (uint8_t)((mem_ptrs >> 1) & 0x07);
     uint16_t char_base = (uint16_t)(bank_base + char_ptr_bits * 0x800);
 
@@ -172,30 +235,11 @@ void vic_render_frame(Vic *vic, const Memory *mem, uint8_t bank, uint32_t *pixel
             uint32_t fg_color = VIC_PALETTE[mcm ? (color_val & 0x07) : color_val];
             uint32_t mc_colors[4] = {bg_color, bg1_color, bg2_color, fg_color};
 
-            for (int line = 0; line < 8; line++) {
-                uint8_t bits = char_rom_visible
-                    ? mem->char_rom[(uint16_t)(char_rom_offset + char_code * 8 + line)]
-                    : mem->ram[(uint16_t)(char_base + char_code * 8 + line)];
-
-                int py = VIC_BORDER_Y + row * 8 + line;
-                uint32_t *prow = pixels + (size_t)py * (size_t)stride + VIC_BORDER_X + col * 8;
-
-                if (cell_multicolor) {
-                    /* Each 2-bit pair (bits 7-6, 5-4, 3-2, 1-0) picks
-                     * one of 4 colors and covers 2 real pixels, not 1 -
-                     * multicolor mode halves horizontal resolution. */
-                    for (int pair = 0; pair < 4; pair++) {
-                        uint8_t val = (bits >> (6 - pair * 2)) & 0x03;
-                        uint32_t c = mc_colors[val];
-                        prow[pair * 2] = c;
-                        prow[pair * 2 + 1] = c;
-                    }
-                } else {
-                    for (int px = 0; px < 8; px++) {
-                        prow[px] = (bits & (0x80 >> px)) ? fg_color : bg_color;
-                    }
-                }
-            }
+            const uint8_t *glyph = char_rom_visible
+                ? &mem->char_rom[(uint16_t)(char_rom_offset + char_code * 8)]
+                : &mem->ram[(uint16_t)(char_base + char_code * 8)];
+            render_cell(pixels, stride, VIC_BORDER_X + col * 8, VIC_BORDER_Y + row * 8,
+                        glyph, cell_multicolor, mc_colors, fg_color, bg_color);
         }
     }
 }

@@ -6,17 +6,17 @@
 
 /* VIC-II (../ROADMAP.md steps 5-6): a free-running raster line
  * counter, 40x25 hi-res AND multicolor text mode (mixed per-cell, real
- * hardware "mode 3" - see vic_render_frame()'s header comment), a
- * solid border/background color (plus two extra multicolor-only
- * background colors, $D022/$D023), raster IRQs, and bad lines (the
- * cycle-stealing DMA quirk a lot of real software's raster-timed
- * effects depend on - see vic_take_badline_stall()'s header comment
- * for exactly what's modeled and what isn't). Rendering still happens
- * once per whole frame, not scanline-by-scanline, so there's no notion
- * of mid-frame raster EFFECTS yet even though the underlying timing
- * (raster IRQs, bad-line CPU stalls) is now real. Deliberately not
- * implemented yet: extended-background-color text mode, bitmap modes,
- * sprites, and light pen.
+ * hardware "mode 3"), standard AND multicolor bitmap mode (see
+ * vic_render_frame()'s header comment for both), a solid border/
+ * background color (plus two extra multicolor-only background colors,
+ * $D022/$D023), raster IRQs, and bad lines (the cycle-stealing DMA
+ * quirk a lot of real software's raster-timed effects depend on - see
+ * vic_take_badline_stall()'s header comment for exactly what's
+ * modeled and what isn't). Rendering still happens once per whole
+ * frame, not scanline-by-scanline, so there's no notion of mid-frame
+ * raster EFFECTS yet even though the underlying timing (raster IRQs,
+ * bad-line CPU stalls) is now real. Deliberately not implemented yet:
+ * extended-background-color text mode, sprites, and light pen.
  *
  * PAL timing: 63 cycles/line, 312 lines/frame (see PAL_CYCLES_PER_LINE/
  * PAL_LINES_PER_FRAME) - matches gtk/main.c's own PAL frame-cycle
@@ -134,28 +134,56 @@ uint32_t vic_take_badline_stall(Vic *vic);
  * PIXELS by `stride` so a caller can wrap a cairo (or similar) surface
  * with its own alignment padding without a reformatting pass).
  *
- * Text mode is "mixed" when MCM ($D016 bit4) is set - real hardware
- * behavior, not a bug: color RAM's bit3 becomes a PER-CELL mode flag
- * instead of part of the color. bit3=0 still renders that cell in
- * plain hi-res, but masked to color RAM bits 0-2 (colors 0-7 only,
- * since bit3 no longer means what it does when MCM is off); bit3=1
- * renders it as true 4-color multicolor instead (background color 0/1/2
- * - $D021/$D022/$D023 - or color RAM bits 0-2 as the 4th color),
- * each of the 4 possible 2-bit values covering 2 real pixels instead
- * of 1, so multicolor cells are at half the horizontal resolution of
- * hi-res ones. When MCM is off entirely, every cell is plain hi-res
- * using the full 4-bit color RAM value, same as before this existed.
+ * Two independent mode axes, both read from $D011/$D016 fresh each
+ * frame: BMM ($D011 bit5) picks bitmap mode over text mode; MCM
+ * ($D016 bit4) picks multicolor pixel encoding over plain hi-res
+ * within whichever of those two is active. Text+bitmap use completely
+ * different memory layouts (see below) so they're handled as two
+ * separate rendering paths; hi-res vs multicolor is the same pixel
+ * encoding either way and shares one helper, render_cell() in vic.c.
+ *
+ * TEXT MODE (BMM=0): screen RAM holds a character code per cell,
+ * looked up in character ROM/RAM for the actual pixel data (see the
+ * character-ROM paragraph below). "Mixed" when MCM is set - real
+ * hardware behavior, not a bug: color RAM's bit3 becomes a PER-CELL
+ * mode flag instead of part of the color. bit3=0 still renders that
+ * cell in plain hi-res, but masked to color RAM bits 0-2 (colors 0-7
+ * only, since bit3 no longer means what it does when MCM is off);
+ * bit3=1 renders it as true 4-color multicolor instead (background
+ * color 0/1/2 - $D021/$D022/$D023 - or color RAM bits 0-2 as the 4th
+ * color). When MCM is off entirely, every cell is plain hi-res using
+ * the full 4-bit color RAM value, same as before bitmap mode existed.
+ *
+ * BITMAP MODE (BMM=1): screen RAM instead holds per-CELL color info
+ * directly (no character-code indirection, and no character ROM
+ * involved at all), and $D018's char/bitmap-pointer field bit3 alone
+ * (bits1-2 of that field are ignored here) picks the bitmap data's
+ * $0000/$2000 offset within the VIC bank - the bitmap bytes themselves
+ * are addressed directly by cell position, 8 contiguous bytes per
+ * cell, same as a character glyph would be. Standard bitmap
+ * (MCM=0): each cell's screen-RAM byte holds its own 2 colors directly
+ * - upper nibble for set bits, lower nibble for clear bits (color RAM
+ * isn't used at all in this mode). Multicolor bitmap (MCM=1): each
+ * 2-bit pixel-pair picks one of 4 colors - 00=background color 0
+ * ($D021), 01=screen-RAM upper nibble, 10=screen-RAM lower nibble,
+ * 11=color RAM's low nibble - a different color-source list than
+ * multicolor TEXT mode's (which uses $D022/$D023, not screen RAM).
+ *
+ * Multicolor halves horizontal resolution in either mode (each 2-bit
+ * pixel-pair covers 2 real pixels, not 1) - shared logic in
+ * render_cell(), not duplicated per mode.
  *
  * `mem` is read directly (mem->ram / mem->char_rom), NOT through
  * memory_read() - the VIC has its own, separate view of memory that
  * ignores the CPU's $A000-$DFFF ROM bank-switching entirely (it never
  * sees BASIC/KERNAL ROM or I/O, only plain RAM - see memory.c). The
- * one exception is the character ROM special case: real C64 wiring
- * makes the character ROM visible to the VIC (never the CPU) whenever
- * its selected character memory pointer lands on offset $1000-$1FFF
- * *within* VIC bank 0 or bank 2 specifically - not banks 1 or 3, since
- * the ROM chip's own select line is physically wired to just those two
- * banks' address decoding. Implemented exactly, not approximated.
+ * one exception is the character ROM special case (TEXT MODE ONLY -
+ * bitmap mode never touches it): real C64 wiring makes the character
+ * ROM visible to the VIC (never the CPU) whenever its selected
+ * character memory pointer lands on offset $1000-$1FFF *within* VIC
+ * bank 0 or bank 2 specifically - not banks 1 or 3, since the ROM
+ * chip's own select line is physically wired to just those two banks'
+ * address decoding. Implemented exactly, not approximated.
  *
  * `bank` (0-3) is the VIC's currently selected 16K RAM bank - resolved
  * from CIA2 PRA bits 0-1 by the caller (machine.c), not read from CIA2

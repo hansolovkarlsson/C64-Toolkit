@@ -23,13 +23,13 @@ newer and was scaffolded directly in this repo (no subtree history).
 - **`emu/`** — `c64emu`, a from-scratch, general-purpose C64 emulator
   (cycle-stepped 6502/6510 CPU, memory/bank-switching, both CIAs
   including real keyboard/joystick wiring, VIC-II [40x25 hi-res AND
-  multicolor text mode, border/background color, raster IRQs, bad
-  lines], a GTK4 shell, eventually SID). Does not share code with
-  `asm/`'s `mini6502.py` test harness — see "`c64emu` (`emu/`)" below
-  for why they're deliberately separate. **Boots real system
-  software**: tested against the MEGA65 `open-roms` open-source ROM
-  replacement, it runs unmodified to a readable BASIC `READY.` prompt.
-  Still no sound, no bitmap modes, no sprites.
+  multicolor text mode, standard AND multicolor bitmap mode, border/
+  background color, raster IRQs, bad lines], a GTK4 shell, eventually
+  SID). Does not share code with `asm/`'s `mini6502.py` test harness —
+  see "`c64emu` (`emu/`)" below for why they're deliberately separate.
+  **Boots real system software**: tested against the MEGA65 `open-roms`
+  open-source ROM replacement, it runs unmodified to a readable BASIC
+  `READY.` prompt. Still no sound, no sprites.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
@@ -297,9 +297,9 @@ memory/bank-switching -> GTK4 shell -> CIA 1/2 -> VIC-II first pass
 (all five done, and as of VIC-II this is now enough to actually boot —
 tested against the MEGA65 `open-roms` open-source ROM replacement, it
 runs unmodified to a readable BASIC `READY.` prompt) -> VIC-II second
-pass (raster IRQs, bad lines, and multicolor text mode done; extended-
-background-color mode, bitmap modes, and sprites not started) -> SID.
-PAL timing only; cartridge and 1541 disk-drive emulation are
+pass (raster IRQs, bad lines, multicolor text mode, and both bitmap
+sub-modes done; extended-background-color mode and sprites not
+started) -> SID. PAL timing only; cartridge and 1541 disk-drive emulation are
 explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
@@ -413,8 +413,23 @@ explicitly out of scope for now.
   ones. One expression (`mcm ? (color_val & 0x07) : color_val`) covers
   the foreground color for all three cases (MCM off, MCM on with
   bit3=0, and the "11" pair color when bit3=1) since they only differ
-  in whether bit3 is masked away. Deliberately still deferred:
-  extended-background-color text mode, bitmap modes, sprites, light
+  in whether bit3 is masked away. **Bitmap modes**: BMM (`$D011` bit5)
+  switches from text mode to bitmap mode entirely — a different memory
+  layout, not a text-mode variant. Screen RAM holds per-CELL color info
+  directly instead of a character code (no character-code indirection,
+  and no character ROM involved — that's text-mode-only); `$D018`'s
+  char/bitmap-pointer field only uses bit3 in bitmap mode (bits1-2 are
+  ignored) to pick the bitmap data's `$0000`/`$2000` offset within the
+  VIC bank. Standard bitmap (MCM=0): each cell's own screen-RAM byte
+  holds its 2 colors directly (upper nibble for set bits, lower for
+  clear) — color RAM isn't used at all. Multicolor bitmap (MCM=1): each
+  2-bit pixel-pair picks one of 4 colors — `$D021`, screen RAM's upper
+  nibble, screen RAM's lower nibble, or color RAM's low nibble — a
+  different color-source list than multicolor TEXT mode's (which uses
+  `$D022`/`$D023`, not screen RAM). The shared hi-res/multicolor pixel-
+  writing logic (identical between text and bitmap modes) is factored
+  into one `render_cell()` helper rather than duplicated. Deliberately
+  still deferred: extended-background-color text mode, sprites, light
   pen — rendering still happens once per whole frame, not scanline by
   scanline, so a raster IRQ handler that pokes `$D020`/`$D021`
   mid-frame for a split-screen effect still won't show up in the
@@ -422,9 +437,10 @@ explicitly out of scope for now.
   raster IRQs fire at the right line. Verified against hand-derived
   expectations, including that a multicolor cell's fallback to plain
   hi-res (bit3=0) genuinely takes that code path rather than just
-  happening to render the same pixels (`tests/vic/`, `tests/machine/`),
-  and, together with the CPU/memory/CIA modules it depends on, against
-  real system software actually booting (`tests/boot/` — see below).
+  happening to render the same pixels, and both bitmap sub-modes
+  (`tests/vic/`, `tests/machine/`), and, together with the CPU/memory/
+  CIA modules it depends on, against real system software actually
+  booting (`tests/boot/` — see below).
 - **Machine wiring** (`src/machine.c`/`src/machine.h` — replaces the ad
   hoc CPU+Memory wiring `gtk/main.c` used to do inline): ties CPU +
   Memory + CIA1 + CIA2 + VIC-II together. Registers one `IoBus` with
