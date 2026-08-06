@@ -83,12 +83,46 @@ each piece will live.
    regression coverage (there's no third-party CIA test suite the way
    step 1 has Klaus Dormann's, so all of it is hand-derived from the
    published 6526 register semantics).
-5. **VIC-II, first pass** - text mode and a solid border color first;
-   bitmap modes, sprites, and raster interrupts after that. "Bad
-   lines" (the cycle-stealing DMA quirk a lot of real software's
-   timing depends on) is its own explicitly-tracked sub-step, not
-   assumed to fall out of the rest for free.
-6. **SID** - the 3-voice synth (square/triangle/sawtooth/noise
+5. ~~**VIC-II, first pass**~~ - done (`src/vic.c`/`src/vic.h`): a
+   free-running raster line counter (63 cycles/line, 312 lines/frame,
+   PAL - `vic_tick()`, called from `machine_step()` the same way
+   `cia_tick()` is, so `$D011`/`$D012` reflect a real, continuously
+   advancing value rather than an inert placeholder), standard 40x25
+   hi-res text mode (screen RAM + character ROM/RAM + color RAM,
+   rendered through whichever VIC bank CIA2 currently selects - see
+   `machine_vic_bank()`), and a solid border/background color
+   (`$D020`/`$D021`) plus DEN (`$D011` bit 4) blanking the display to
+   the border color when clear. Implements the real hardware quirk
+   where the character ROM is only visible to the VIC (never the CPU)
+   in banks 0 and 2 specifically, not 1 or 3, when the character
+   pointer selects offset `$1000`/`$1800` - see `vic_render_frame()`'s
+   header comment. Rendering happens once per whole frame, not
+   scanline-by-scanline, so there's no bad-lines modeling yet and no
+   mid-frame raster effects are possible - that's genuinely deferred,
+   along with raster IRQs (`$D011`/`$D012` writes don't set up a
+   compare target yet, `$D019`/`$D01A` are passive storage only),
+   multicolor/extended-background-color text modes, bitmap modes,
+   sprites, and light pen - all explicitly out of scope for "first
+   pass," see `vic.h`'s header comment. Verified against hand-derived
+   expectations (`tests/vic/`) AND against a real open-source ROM
+   replacement (the MEGA65 `open-roms` project) actually booting to a
+   readable BASIC `READY.` prompt with legible boot-menu text - the
+   first time this emulator has run unmodified third-party C64 system
+   software at all, not just its own test fixtures. "Bad lines" (the
+   cycle-stealing DMA quirk a lot of real software's timing depends
+   on) remains its own explicitly-tracked follow-up, not assumed to
+   fall out of a future pass for free.
+6. **VIC-II, second pass** - everything step 5 explicitly deferred:
+   raster IRQs (real `$D011`/`$D012` write-sets-compare-target
+   semantics, `$D019`/`$D01A` wired into `cpu.irq_line` the same way
+   CIA1 already is), "bad lines" (the cycle-stealing DMA quirk),
+   multicolor and extended-background-color text modes, bitmap modes,
+   sprites, and light pen. Also where real border geometry (currently
+   a fixed, plausible-looking approximation - see `vic.h`) and
+   scanline-by-scanline rendering (instead of one whole frame per
+   `vic_render_frame()` call) would need to land, if either turns out
+   to matter for real software being tested against.
+7. **SID** - the 3-voice synth (square/triangle/sawtooth/noise
    generators, ADSR envelopes) without exact analog filter modeling
    at first; revisit filter accuracy later if it matters for a
    specific piece of software being tested against.

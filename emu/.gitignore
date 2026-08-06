@@ -5,6 +5,7 @@ tests/cpu/test_interrupts
 tests/memory/test_memory
 tests/cia/test_cia
 tests/machine/test_machine
+tests/vic/test_vic
 
 # ROM images (Commodore's copyrighted KERNAL/BASIC/character binaries)
 # - dump your own from a C64 you own, never commit these. See

@@ -2,8 +2,8 @@ CC ?= cc
 CFLAGS ?= -std=c99 -O2 -Wall -Wextra
 
 BIN := test_machine
-SOURCES := test_machine.c ../../src/machine.c ../../src/cia.c ../../src/memory.c ../../src/cpu.c
-HEADERS := ../../src/machine.h ../../src/cia.h ../../src/memory.h ../../src/cpu.h
+SOURCES := test_machine.c ../../src/machine.c ../../src/cia.c ../../src/vic.c ../../src/memory.c ../../src/cpu.c
+HEADERS := ../../src/machine.h ../../src/cia.h ../../src/vic.h ../../src/memory.h ../../src/cpu.h
 
 .PHONY: all run clean
 

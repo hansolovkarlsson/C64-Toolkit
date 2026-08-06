@@ -4,6 +4,7 @@
 #include "cpu.h"
 #include "memory.h"
 #include "cia.h"
+#include "vic.h"
 
 /* Wires the CPU, memory map, and both CIAs together into one C64:
  * registers a single IoBus with Memory that dispatches $DC00-$DCFF to
@@ -19,7 +20,8 @@ typedef struct {
     Cpu6502 cpu;
     Memory mem;
     Cia cia1; /* keyboard matrix, joystick 1/2, IRQ */
-    Cia cia2; /* serial bus, VIC bank select, user port, NMI - none of that is modeled yet beyond the chip itself */
+    Cia cia2; /* serial bus, VIC bank select, user port, NMI - only VIC bank select is modeled, via cia2's own PRA/DDRA (see machine_vic_bank()) */
+    Vic vic;  /* text-mode display, see vic.h for exactly what's modeled */
 
     /* key_matrix[pa_bit] bit pb_bit set == that key is currently held.
      * pa_bit/pb_bit follow the standard published C64 keyboard matrix
@@ -58,6 +60,12 @@ int machine_step(Machine *m);
 
 /* pa_bit/pb_bit: 0-7, see key_matrix's own comment above. */
 void machine_set_key(Machine *m, int pa_bit, int pb_bit, int pressed);
+
+/* The VIC's currently selected 16K RAM bank (0-3), resolved from
+ * CIA2 PRA bits 0-1 (active-low, hence the inversion) - a caller
+ * rendering a frame (e.g. gtk/main.c) needs this to pass to
+ * vic_render_frame(). */
+uint8_t machine_vic_bank(Machine *m);
 
 /* port: 1 or 2. bits: active-low, bits 0-4 meaningful (see joystick1/
  * joystick2's comment above) - bits 5-7 of `bits` are ignored, always

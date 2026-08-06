@@ -5,24 +5,28 @@ core, memory/bank-switching, CIA/VIC-II/SID chip emulation, and a
 GTK4 front end — built the same way `asm/` and `C/` were, without
 leaning on an existing emulator core.
 
-**Status:** steps 1-4 of the build order are done - a full legal
+**Status:** steps 1-5 of the build order are done - a full legal
 6502/6510 instruction set (`src/cpu.c`, verified against Klaus
 Dormann's 6502 functional test suite plus a hand-written interrupt/
 reset check), the C64's memory map/bank switching (`src/memory.c`,
 verified against the full mode table with no cartridge present), a
-minimal GTK4 shell (`gtk/main.c`) that drives the machine through a
-real window/event loop and displays screen RAM as a raw grayscale grid
-(not real VIC-II output - that doesn't exist yet), and both CIAs
-(`src/cia.c` for the chip, `src/machine.c` for the C64-specific
-keyboard-matrix/joystick/IRQ-NMI wiring on top of it). Real keyboard
-input now reaches the machine: typing in the GTK window feeds CIA1's
-keyboard matrix, so BASIC/KERNAL will see it once real ROM images are
-present. See `tests/cpu/README.md`, `tests/memory/README.md`,
-`tests/cia/README.md`, `tests/machine/README.md`, and this file's
-"Building" section below. No VIC-II/SID yet (so no real graphics, no
-sound, and no joystick wiring in the GTK shell yet even though
-`machine_set_joystick()` exists). See [`ROADMAP.md`](ROADMAP.md) for
-what's next.
+GTK4 shell (`gtk/main.c`), both CIAs (`src/cia.c` for the chip,
+`src/machine.c` for the C64-specific keyboard-matrix/joystick/IRQ-NMI
+wiring on top of it - real keyboard input reaches the machine, typing
+in the window feeds CIA1's keyboard matrix), and a first-pass VIC-II
+(`src/vic.c` - real 40x25 hi-res text mode through screen RAM/
+character ROM/color RAM and whichever bank CIA2 selects, plus a solid
+border/background color). **This is now enough to actually boot**:
+tested against a real open-source ROM replacement (the MEGA65
+`open-roms` project), it runs unmodified all the way to a readable
+BASIC `READY.` prompt. See `tests/cpu/README.md`, `tests/memory/README.md`,
+`tests/cia/README.md`, `tests/machine/README.md`, `tests/vic/README.md`,
+and this file's "Building" section below. No SID yet (no sound); no
+raster IRQs, multicolor/bitmap modes, or sprites yet either (see
+`vic.h`'s header comment for the full list of what first-pass VIC-II
+deliberately left out); no joystick wiring in the GTK shell yet even
+though `machine_set_joystick()` exists. See [`ROADMAP.md`](ROADMAP.md)
+for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
 
@@ -69,12 +73,16 @@ make clean
 ./bin/c64emu [rom-dir]   # rom-dir defaults to "roms" (see "ROM images" below)
 ```
 
-The window drives the CPU at ~50 Hz and shows screen RAM
-(`$0400`-`$07E7`) as a raw grayscale grid - not real graphics yet, see
-`ROADMAP.md`'s step 3 entry for why. It runs fine with no ROMs loaded
-(the CPU just executes a harmless BRK loop on zeroed memory), which is
-enough to see the window/event loop working before real ROMs are
-available.
+The window drives the machine at ~50 Hz (PAL frame rate) and shows
+real VIC-II text-mode output - see `vic.h`'s header comment for
+exactly what's modeled (40x25 hi-res text, border/background color,
+DEN blanking) versus deliberately deferred (raster IRQs, multicolor/
+bitmap modes, sprites). It runs fine with no ROMs loaded (the CPU just
+executes a harmless BRK loop on zeroed memory, and the screen stays
+whatever color `$D021`/`$D020` default to), which is enough to see the
+window/event loop working before real ROMs are available - but with
+real `kernal.rom`/`basic.rom`/`chargen.rom` in `roms/` (see "ROM
+images" below), it now actually boots to a readable BASIC prompt.
 
 Each core piece also has its own standalone correctness gate,
 independent of the GTK build:
@@ -84,9 +92,10 @@ cd tests/cpu && make fetch && make run-all   # CPU core
 cd tests/memory && make run                  # memory map / bank switching
 cd tests/cia && make run                     # CIA chip (timers, ports, ICR)
 cd tests/machine && make run                 # CIA <-> C64 wiring (keyboard, joystick, IRQ/NMI)
+cd tests/vic && make run                     # VIC-II (raster counter, text rendering, char ROM bank quirk)
 ```
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (VIC-II, first pass).
+See [`ROADMAP.md`](ROADMAP.md) for what's next (VIC-II second pass, or SID).
 
 ## ROM images
 

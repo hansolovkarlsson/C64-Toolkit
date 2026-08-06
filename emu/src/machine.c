@@ -40,6 +40,12 @@ static void update_keyboard_pins(Machine *m) {
 
 static uint8_t io_read(void *ctx, uint16_t addr) {
     Machine *m = ctx;
+    if (addr >= 0xD000 && addr <= 0xD3FF) {
+        return vic_read(&m->vic, (uint8_t)addr);
+    }
+    if (addr >= 0xD800 && addr <= 0xDBFF) {
+        return vic_color_ram_read(&m->vic, addr);
+    }
     if (addr >= 0xDC00 && addr <= 0xDCFF) {
         update_keyboard_pins(m);
         return cia_read(&m->cia1, (uint8_t)addr);
@@ -47,11 +53,19 @@ static uint8_t io_read(void *ctx, uint16_t addr) {
     if (addr >= 0xDD00 && addr <= 0xDDFF) {
         return cia_read(&m->cia2, (uint8_t)addr);
     }
-    return 0xFF; /* VIC-II/SID/color RAM/cartridge I/O - not implemented yet */
+    return 0xFF; /* SID/cartridge I/O - not implemented yet */
 }
 
 static void io_write(void *ctx, uint16_t addr, uint8_t v) {
     Machine *m = ctx;
+    if (addr >= 0xD000 && addr <= 0xD3FF) {
+        vic_write(&m->vic, (uint8_t)addr, v);
+        return;
+    }
+    if (addr >= 0xD800 && addr <= 0xDBFF) {
+        vic_color_ram_write(&m->vic, addr, v);
+        return;
+    }
     if (addr >= 0xDC00 && addr <= 0xDCFF) {
         cia_write(&m->cia1, (uint8_t)addr, v);
         update_keyboard_pins(m); /* an output latch may have just changed - keep pins consistent for an immediate follow-up read */
@@ -61,13 +75,14 @@ static void io_write(void *ctx, uint16_t addr, uint8_t v) {
         cia_write(&m->cia2, (uint8_t)addr, v);
         return;
     }
-    /* VIC-II/SID/color RAM/cartridge I/O - not implemented yet, write dropped */
+    /* SID/cartridge I/O - not implemented yet, write dropped */
 }
 
 void machine_init(Machine *m) {
     memory_init(&m->mem);
     cia_init(&m->cia1);
     cia_init(&m->cia2);
+    vic_init(&m->vic);
     memset(m->key_matrix, 0, sizeof(m->key_matrix));
     m->joystick1 = 0xFF;
     m->joystick2 = 0xFF;
@@ -96,6 +111,7 @@ int machine_step(Machine *m) {
     int cycles = cpu_step(&m->cpu);
     cia_tick(&m->cia1, cycles);
     cia_tick(&m->cia2, cycles);
+    vic_tick(&m->vic, cycles);
 
     /* CIA1 -> /IRQ (level-triggered): only one source exists so far,
      * so this can just assign rather than OR in a bit - revisit once
@@ -115,6 +131,11 @@ void machine_set_key(Machine *m, int pa_bit, int pb_bit, int pressed) {
     uint8_t bit = (uint8_t)(1u << pb_bit);
     if (pressed) m->key_matrix[pa_bit] |= bit;
     else m->key_matrix[pa_bit] &= (uint8_t)~bit;
+}
+
+uint8_t machine_vic_bank(Machine *m) {
+    uint8_t pra = cia_read(&m->cia2, 0x00);
+    return (uint8_t)((~pra) & 0x03);
 }
 
 void machine_set_joystick(Machine *m, int port, uint8_t bits) {

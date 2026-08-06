@@ -22,13 +22,14 @@ newer and was scaffolded directly in this repo (no subtree history).
   below).
 - **`emu/`** — `c64emu`, a from-scratch, general-purpose C64 emulator
   (cycle-stepped 6502/6510 CPU, memory/bank-switching, both CIAs
-  including real keyboard/joystick wiring, a minimal GTK4 shell,
-  eventually VIC-II/SID). Does not share code with `asm/`'s
-  `mini6502.py` test harness — see "`c64emu` (`emu/`)" below for why
-  they're deliberately separate. Early-stage: no real graphics or
-  sound yet — the GTK shell drives the machine and shows raw
-  screen-RAM bytes, not real VIC-II output, though keyboard input is
-  now real (it reaches CIA1's keyboard matrix).
+  including real keyboard/joystick wiring, a first-pass VIC-II
+  [40x25 text mode, border/background color], a GTK4 shell, eventually
+  SID). Does not share code with `asm/`'s `mini6502.py` test harness —
+  see "`c64emu` (`emu/`)" below for why they're deliberately separate.
+  **Boots real system software**: tested against the MEGA65
+  `open-roms` open-source ROM replacement, it runs unmodified to a
+  readable BASIC `READY.` prompt. Still no sound, no raster IRQs, no
+  multicolor/bitmap modes, no sprites.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
@@ -46,7 +47,7 @@ next-language-features order for `cc64`, the root `ROADMAP.md` has the
 still-undecided question of whether `cc64`'s future standard library
 should wrap `asm/lib/` or stay independent, and `emu/ROADMAP.md` has
 `c64emu`'s staged build order (CPU -> memory -> GTK shell -> CIA ->
-VIC-II -> SID).
+VIC-II first pass -> VIC-II second pass -> SID).
 
 ## Commands
 
@@ -165,13 +166,17 @@ make run
 # 6526 register semantics and the standard C64 keyboard matrix
 cd emu/tests/cia && make run
 cd emu/tests/machine && make run
+
+# VIC-II (raster counter, text rendering, char-ROM bank quirk): hand-written checks
+cd emu/tests/vic && make run
 ```
 
-All four gates must pass before building on top of the module(s) they
+All five gates must pass before building on top of the module(s) they
 cover — see `emu/tests/cpu/README.md`, `emu/tests/memory/README.md`,
-`emu/tests/cia/README.md`, and `emu/tests/machine/README.md` for what
-"pass" looks like and how to re-derive the CPU suite's success address
-if a future revision of it moves.
+`emu/tests/cia/README.md`, `emu/tests/machine/README.md`, and
+`emu/tests/vic/README.md` for what "pass" looks like and how to
+re-derive the CPU suite's success address if a future revision of it
+moves.
 
 ## Architecture
 
@@ -280,9 +285,13 @@ something that looks like a limitation:
 A real, general-purpose C64 emulator meant to run actual games/demos
 with a GUI — a different goal from `mini6502.py` below, and the two
 share no code. Staged build order (see `emu/ROADMAP.md`): CPU core ->
-memory/bank-switching -> minimal GTK4 shell -> CIA 1/2 (all four done)
--> VIC-II -> SID. PAL timing only; cartridge and 1541 disk-drive
-emulation are explicitly out of scope for now.
+memory/bank-switching -> GTK4 shell -> CIA 1/2 -> VIC-II first pass
+(all five done, and as of VIC-II this is now enough to actually boot —
+tested against the MEGA65 `open-roms` open-source ROM replacement, it
+runs unmodified to a readable BASIC `READY.` prompt) -> VIC-II second
+pass (raster IRQs, bad lines, multicolor/bitmap modes, sprites) -> SID.
+PAL timing only; cartridge and 1541 disk-drive emulation are
+explicitly out of scope for now.
 
 - **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
   instruction set, addressing modes, and per-instruction cycle counts
@@ -310,9 +319,10 @@ emulation are explicitly out of scope for now.
   ("write under ROM") — `memory_write()` doesn't special-case the ROM
   regions at all because of this, only `$D000`-`$DFFF` when I/O
   (rather than RAM or character ROM) is currently banked in there.
-  VIC-II/SID/CIA don't exist yet, so `$D000`-`$DFFF`'s I/O mode is
-  currently an inert placeholder (`IoBus`, unregistered — reads return
-  `$FF`, writes are dropped).
+  `machine.c` registers a real `IoBus` here that dispatches VIC-II/
+  color RAM/CIA1/CIA2 to their own models (see below) — SID and
+  cartridge I/O still fall through to the original inert placeholder
+  (reads `$FF`, writes dropped).
 - **ROM images** (`roms/`) are not checked in — Commodore's copyrighted
   binaries. See `emu/roms/README.md`.
 - **CIA chip** (`src/cia.c`/`src/cia.h`): a chip-generic MOS 6526
@@ -334,12 +344,43 @@ emulation are explicitly out of scope for now.
   Verified against hand-derived expectations from the published 6526
   register semantics (`tests/cia/`) — there's no third-party CIA test
   suite the way the CPU core has Klaus Dormann's.
-- **Machine wiring** (`src/machine.c`/`src/machine.h`, new — replaces
-  the ad hoc CPU+Memory wiring `gtk/main.c` used to do inline): ties
-  CPU + Memory + CIA1 + CIA2 together. Registers one `IoBus` with
-  `Memory` that dispatches `$DC00`-`$DCFF` to CIA1 and `$DD00`-`$DDFF`
-  to CIA2 (everything else in `$D000`-`$DFFF` still falls through to
-  the inert placeholder, since VIC-II/SID/color RAM don't exist yet).
+- **VIC-II, first pass** (`src/vic.c`/`src/vic.h`): a free-running
+  raster line counter (63 cycles/line, 312 lines/frame, PAL —
+  `vic_tick()`, called from `machine_step()` the same way
+  `cia_tick()` is, so `$D011`/`$D012` reflect a real, continuously
+  advancing value — this specifically is what real KERNAL/BASIC boot
+  code polls to detect the passage of time before CIA/VIC interrupts
+  are even set up, and what unblocked booting to `READY.` at all),
+  standard 40x25 hi-res text mode, and a solid border/background color
+  (`$D020`/`$D021`) with DEN (`$D011` bit 4) blanking the whole
+  display to the border color when clear. Reads screen/character
+  memory directly out of `Memory`'s `ram`/`char_rom` fields — NOT
+  through `memory_read()`, since the VIC has its own view of memory
+  that never sees the CPU's ROM bank-switching, only plain RAM (plus
+  one exception: implements the real hardware quirk where the
+  character ROM is visible to the VIC — never the CPU — specifically
+  in banks 0 and 2, not 1 or 3, when the character pointer selects
+  offset `$1000`/`$1800`, since the ROM chip's select line is
+  physically wired to just those two banks' decoding). Color RAM
+  (`$D800`-`$DBFF`, a real physically separate 4-bit-wide chip, low
+  nibble meaningful) lives in `Vic` since only rendering ever reads
+  it. Deliberately deferred to a later pass: raster IRQs (`$D011`/
+  `$D012` writes don't set a compare target yet, `$D019`/`$D01A` are
+  passive storage only), bad lines, multicolor/bitmap modes, sprites,
+  light pen — rendering happens once per whole frame, not scanline by
+  scanline, so none of that is possible yet regardless. Verified
+  against hand-derived expectations (`tests/vic/`) and against the
+  MEGA65 `open-roms` project's real ROMs actually booting.
+- **Machine wiring** (`src/machine.c`/`src/machine.h` — replaces the ad
+  hoc CPU+Memory wiring `gtk/main.c` used to do inline): ties CPU +
+  Memory + CIA1 + CIA2 + VIC-II together. Registers one `IoBus` with
+  `Memory` that dispatches `$D000`-`$D3FF` to VIC-II registers,
+  `$D800`-`$DBFF` to color RAM, `$DC00`-`$DCFF` to CIA1, and
+  `$DD00`-`$DDFF` to CIA2 (SID's `$D400`-`$D7FF` and cartridge I/O
+  still fall through to the inert placeholder). `machine_vic_bank()`
+  resolves the VIC's current 16K bank from CIA2 PRA bits 0-1 (via
+  `cia_read()`, reusing CIA's own DDR/output-latch logic rather than
+  duplicating it) for `gtk/main.c` to pass into `vic_render_frame()`.
   Implements the actual C64-specific keyboard-matrix/joystick wiring
   on top of the generic CIA1: `update_keyboard_pins()` computes a
   pin-pulldown model in both directions (PRA driving columns pulls
@@ -348,32 +389,40 @@ emulation are explicitly out of scope for now.
   shares PRA's pins 0-4 with keyboard column-select, joystick 1 shares
   PRB's, a real and well-known hardware quirk (see
   `asm/docs/c64-memory-reference.md` §6). `machine_step()` calls
-  `cpu_step()` once, ticks both CIAs by exactly that many cycles (NOT
-  batched per video frame — that would make timers grossly imprecise
-  and could miss interrupts), then propagates CIA1's interrupt output
-  into `cpu.irq_line` (level-triggered, direct assignment since it's
-  currently the only IRQ source) and CIA2's into `cpu_nmi()`
-  (edge-triggered — CIA2's IRQ output is wired to the CPU's /NMI pin
-  on real hardware, not /IRQ, so `machine.c` tracks the previous state
-  itself and only calls `cpu_nmi()` on a 0->1 transition). Verified
-  against hand-derived expectations for keyboard scanning (both
-  directions), joystick/keyboard pin-sharing, and IRQ/NMI propagation
-  (`tests/machine/`).
+  `cpu_step()` once, ticks both CIAs and the VIC by exactly that many
+  cycles (NOT batched per video frame — that would make CIA timers
+  grossly imprecise and could miss interrupts), then propagates CIA1's
+  interrupt output into `cpu.irq_line` (level-triggered, direct
+  assignment since it's currently the only IRQ source — VIC-II raster
+  IRQs will need to OR in here once the second pass adds them) and
+  CIA2's into `cpu_nmi()` (edge-triggered — CIA2's IRQ output is wired
+  to the CPU's /NMI pin on real hardware, not /IRQ, so `machine.c`
+  tracks the previous state itself and only calls `cpu_nmi()` on a
+  0->1 transition). Verified against hand-derived expectations for
+  keyboard scanning (both directions), joystick/keyboard pin-sharing,
+  and IRQ/NMI propagation (`tests/machine/`).
 - **GTK4 shell** (`gtk/main.c`): drives the whole `Machine` via a
   `g_timeout_add` loop at ~50 Hz (PAL frame rate; `CYCLES_PER_FRAME`
-  worth of `machine_step()` calls per tick, not cycle-exact — there's
-  no raster to synchronize against until VIC-II exists). Renders
-  screen RAM (`$0400`-`$07E7`) as a raw 40x25 grid of grayscale cells,
-  one byte value per cell — deliberately not real VIC-II text-mode
-  decoding, just proof that the core can be driven and displayed from
-  a real GUI event loop. Runs fine with 0/3 ROMs loaded (the CPU just
-  executes a harmless BRK loop on zeroed memory). Keyboard events are
-  now real: GDK key events are translated through `c64_keymap[]` (GDK
-  keyval -> C64 keyboard-matrix PA/PB position, standard published
-  matrix — not exhaustive, see the table's own comment for what's
-  missing) into `machine_set_key()` calls, so typing in the window
-  reaches BASIC/KERNAL once real ROM images are present. Joystick
-  input isn't wired into the GTK shell yet even though
+  — literally `PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME` from `vic.h`
+  — worth of `machine_step()` calls per tick, not raster-synchronized,
+  since `vic_render_frame()` draws a whole frame at once rather than
+  scanline by scanline). Renders by calling `vic_render_frame()` into
+  a `uint32_t` pixel buffer sized to cairo's own required stride (via
+  `cairo_format_stride_for_width()`, NOT assumed to be
+  `VIC_CANVAS_W * 4` — that can have alignment padding), then blits it
+  in one call with `cairo_image_surface_create_for_data()` +
+  `cairo_paint()` rather than per-pixel `cairo_rectangle()`/`cairo_fill()`
+  calls, which wouldn't keep up at ~50Hz for a canvas this size. Runs
+  fine with 0/3 ROMs loaded (the CPU just executes a harmless BRK loop
+  on zeroed memory). Keyboard events are real: GDK key events are
+  translated through `c64_keymap[]` (GDK keyval -> C64 keyboard-matrix
+  PA/PB position, standard published matrix — not exhaustive, see the
+  table's own comment for what's missing) into `machine_set_key()`
+  calls, so typing in the window reaches BASIC/KERNAL once real ROM
+  images are present (also logged to stderr — with no VIC-II sprite/
+  cursor feedback loop of its own yet, that's the only confirmation a
+  keypress was recognized without ROMs echoing it to the screen).
+  Joystick input isn't wired into the GTK shell yet even though
   `machine_set_joystick()` exists. Built with `-std=c11`, not this
   toolkit's usual `-std=c99` — GTK4's own headers rely on C11
   typedef-redefinition tolerance (`G_DECLARE_*_TYPE` macros);

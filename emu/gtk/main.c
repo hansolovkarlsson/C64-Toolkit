@@ -1,18 +1,17 @@
 /*
- * main.c - minimal GTK4 shell (../ROADMAP.md step 3, keyboard now
- * wired through step 4's CIA1). Drives the whole machine (CPU +
- * memory + both CIAs, see ../src/machine.h) through a real GUI event
- * loop.
+ * main.c - minimal GTK4 shell (../ROADMAP.md step 3, keyboard wired
+ * through step 4's CIA1, real VIC-II text-mode rendering as of step
+ * 5). Drives the whole machine (CPU + memory + both CIAs + VIC-II,
+ * see ../src/machine.h) through a real GUI event loop.
  *
- * The "framebuffer" here is deliberately not real VIC-II output -
- * there's no character/bitmap mode decoding yet (step 5). It's screen
- * RAM ($0400-$07E7, the default 40x25 text screen location) rendered
- * one byte per cell as a raw grayscale value, so the same 320x200
- * canvas this window shows today can be handed to a real VIC-II text-
- * mode renderer later without changing the window/loop plumbing
- * around it.
+ * The window shows ../src/vic.c's first-pass VIC-II output: real
+ * 40x25 hi-res text mode (screen RAM + character ROM/RAM + color RAM,
+ * through whichever VIC bank CIA2 currently selects) plus a solid
+ * border/background color - see vic.h's header comment for exactly
+ * what's modeled and what's deliberately deferred (raster IRQs,
+ * multicolor/bitmap modes, sprites).
  *
- * Keyboard events ARE now wired to something real: GDK key events are
+ * Keyboard events are wired to something real: GDK key events are
  * translated to C64 keyboard-matrix positions (see c64_keymap below)
  * and fed into CIA1 via machine_set_key(), so typing in this window
  * reaches BASIC/KERNAL once real ROM images are present (see
@@ -21,25 +20,22 @@
 
 #include <gtk/gtk.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "../src/machine.h"
 
-#define SCREEN_COLS 40
-#define SCREEN_ROWS 25
-#define SCREEN_BASE 0x0400
-#define CELL_PX 8
-#define CANVAS_W (SCREEN_COLS * CELL_PX)
-#define CANVAS_H (SCREEN_ROWS * CELL_PX)
-
-/* PAL C64: ~985248 Hz CPU clock, ~50.12 Hz frame rate -> ~19656
- * cycles/frame. Approximated with a 20ms GTK timer (~50 Hz) rather
- * than anything cycle-exact - there's no VIC-II raster to synchronize
- * against yet, so real frame timing isn't meaningful until step 5. */
-#define CYCLES_PER_FRAME 19656
+/* PAL C64: ~985248 Hz CPU clock, ~50.12 Hz frame rate -> 19656
+ * cycles/frame (PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME, see
+ * vic.h). Approximated with a 20ms GTK timer (~50 Hz) rather than
+ * anything cycle-exact or actually raster-synchronized - vic.c
+ * renders a whole frame at once, not scanline by scanline. */
+#define CYCLES_PER_FRAME (PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME)
 #define FRAME_MS 20
 
 typedef struct {
     Machine machine;
     GtkWidget *drawing_area;
+    uint32_t *pixel_buf;  /* VIC_CANVAS_W x VIC_CANVAS_H, row stride given by pixel_stride (may have alignment padding - see activate()) */
+    int pixel_stride;     /* in uint32_t units, not bytes */
 } App;
 
 /* GDK keyval -> C64 keyboard matrix (pa_bit selects the column CIA1's
@@ -118,15 +114,16 @@ static void draw_screen(GtkDrawingArea *area, cairo_t *cr, int width, int height
     (void)width;
     (void)height;
     App *app = user_data;
-    for (int row = 0; row < SCREEN_ROWS; row++) {
-        for (int col = 0; col < SCREEN_COLS; col++) {
-            uint8_t v = memory_read(&app->machine.mem, (uint16_t)(SCREEN_BASE + row * SCREEN_COLS + col));
-            double shade = v / 255.0;
-            cairo_set_source_rgb(cr, shade, shade, shade);
-            cairo_rectangle(cr, col * CELL_PX, row * CELL_PX, CELL_PX, CELL_PX);
-            cairo_fill(cr);
-        }
-    }
+
+    uint8_t bank = machine_vic_bank(&app->machine);
+    vic_render_frame(&app->machine.vic, &app->machine.mem, bank, app->pixel_buf, app->pixel_stride);
+
+    cairo_surface_t *surface = cairo_image_surface_create_for_data(
+        (unsigned char *)app->pixel_buf, CAIRO_FORMAT_RGB24,
+        VIC_CANVAS_W, VIC_CANVAS_H, app->pixel_stride * 4);
+    cairo_set_source_surface(cr, surface, 0, 0);
+    cairo_paint(cr);
+    cairo_surface_destroy(surface);
 }
 
 static gboolean tick(gpointer user_data) {
@@ -177,11 +174,19 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
     /* Matches the drawing area's own fixed content size exactly - a
      * bigger default would leave dead space around it, since nothing
      * here stretches the canvas to fill extra window area. */
-    gtk_window_set_default_size(GTK_WINDOW(window), CANVAS_W, CANVAS_H);
+    gtk_window_set_default_size(GTK_WINDOW(window), VIC_CANVAS_W, VIC_CANVAS_H);
+
+    /* cairo_image_surface_create_for_data() requires a stride that
+     * matches cairo's own alignment rules for the format, which isn't
+     * necessarily VIC_CANVAS_W * 4 - so the pixel buffer's row stride
+     * is whatever cairo says it should be, not assumed. */
+    int stride_bytes = cairo_format_stride_for_width(CAIRO_FORMAT_RGB24, VIC_CANVAS_W);
+    app->pixel_stride = stride_bytes / 4;
+    app->pixel_buf = calloc((size_t)app->pixel_stride * VIC_CANVAS_H, sizeof(uint32_t));
 
     app->drawing_area = gtk_drawing_area_new();
-    gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(app->drawing_area), CANVAS_W);
-    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(app->drawing_area), CANVAS_H);
+    gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(app->drawing_area), VIC_CANVAS_W);
+    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(app->drawing_area), VIC_CANVAS_H);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(app->drawing_area), draw_screen, app, NULL);
     gtk_window_set_child(GTK_WINDOW(window), app->drawing_area);
 
