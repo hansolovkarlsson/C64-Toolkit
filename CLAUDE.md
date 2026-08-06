@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-This repo bundles two independent, self-contained C64 toolchain
-projects, each merged in via `git subtree` (so `git log`/`blame` on a
-file still reaches that project's pre-merge history — see
-`git log <path> --follow` limitations if a plain `git log` on a path
-looks truncated; `git blame` always works):
+This repo bundles three C64 toolchain projects. `asm/` and `C/` are
+independent, self-contained, and each merged in via `git subtree` (so
+`git log`/`blame` on a file still reaches that project's pre-merge
+history — see `git log <path> --follow` limitations if a plain `git
+log` on a path looks truncated; `git blame` always works). `emu/` is
+newer and was scaffolded directly in this repo (no subtree history).
 
 - **`asm/`** — `c64asm`, a two-pass 6502/6510 assembler for the C64, in
   two interchangeable, byte-identical-output implementations (Python,
@@ -19,21 +20,30 @@ looks truncated; `git blame` always works):
 - **`C/`** — `cc64`, a small C-to-6502 compiler that targets `c64asm`'s
   exact syntax as its output. Depends on `asm/` at build/run time (see
   below).
+- **`emu/`** — `c64emu`, a from-scratch, general-purpose C64 emulator
+  (cycle-stepped 6502/6510 CPU, memory/bank-switching, eventually CIA/
+  VIC-II/SID and a GTK4 front end). Does not share code with `asm/`'s
+  `mini6502.py` test harness — see "`c64emu` (`emu/`)" below for why
+  they're deliberately separate. Early-stage: only the CPU core and
+  memory map exist so far, no display/GTK/chip emulation yet.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
 `c64asm`. A full C -> `.prg` pipeline needs both binaries built, `cc64`
-first.
+first. `emu/` is unrelated to that pipeline — it's a consumer of the
+`.prg` files the other two produce, not a dependency of either.
 
 **Roadmaps**: [`ROADMAP.md`](ROADMAP.md) tracks cross-project direction
-(open questions spanning both subprojects, ideas without an owner yet);
-[`asm/ROADMAP.md`](asm/ROADMAP.md) and [`C/ROADMAP.md`](C/ROADMAP.md)
-track each subproject's own open work. Check the relevant one before
-assuming something is unplanned, already decided, or still missing —
-e.g. `C/ROADMAP.md` has the real next-language-features order for
-`cc64`, and the root `ROADMAP.md` has the still-undecided question of
-whether `cc64`'s future standard library should wrap `asm/lib/` or stay
-independent.
+(open questions spanning `asm/`/`C/`, ideas without an owner yet);
+[`asm/ROADMAP.md`](asm/ROADMAP.md), [`C/ROADMAP.md`](C/ROADMAP.md), and
+[`emu/ROADMAP.md`](emu/ROADMAP.md) track each subproject's own open
+work. Check the relevant one before assuming something is unplanned,
+already decided, or still missing — e.g. `C/ROADMAP.md` has the real
+next-language-features order for `cc64`, the root `ROADMAP.md` has the
+still-undecided question of whether `cc64`'s future standard library
+should wrap `asm/lib/` or stay independent, and `emu/ROADMAP.md` has
+`c64emu`'s staged build order (CPU -> memory -> GTK shell -> CIA ->
+VIC-II -> SID).
 
 ## Commands
 
@@ -120,6 +130,30 @@ Each `tests/*.c` file targets one compiler area — `features.c` (arithmetic/
 bitwise/comparison/control-flow), `pointers.c`, `recursion.c` (including an
 80-deep recursion stress case), `include.c` (`#include` + stdlib), `structs.c`,
 `forward.c` (declaration-order independence).
+
+### `emu/` — the emulator
+
+No `bin/c64emu` yet — no display or entry point to build one around.
+Each piece that exists so far has its own standalone correctness gate,
+run directly rather than through a top-level Makefile:
+
+```sh
+# CPU core: Klaus Dormann's 6502 functional test suite + a hand-written
+# interrupt/reset check
+cd emu/tests/cpu
+make fetch      # downloads 6502_functional_test.bin (not vendored, GPL-3.0)
+make run-all    # builds + runs both test_cpu and test_interrupts
+
+# Memory map / bank switching: hand-written checks against the full
+# bank-switching mode table
+cd emu/tests/memory
+make run
+```
+
+Both gates must pass before building on top of either module — see
+`emu/tests/cpu/README.md` and `emu/tests/memory/README.md` for what
+"pass" looks like and how to re-derive the CPU suite's success address
+if a future revision of it moves.
 
 ## Architecture
 
@@ -223,19 +257,67 @@ something that looks like a limitation:
   zero-page address is unused without checking `C/README.md`'s "Zero-page
   usage" section first.
 
+### `c64emu` (`emu/`)
+
+A real, general-purpose C64 emulator meant to run actual games/demos
+with a GUI — a different goal from `mini6502.py` below, and the two
+share no code. Staged build order (see `emu/ROADMAP.md`): CPU core ->
+memory/bank-switching (both done) -> minimal GTK4 shell -> CIA 1/2 ->
+VIC-II -> SID. PAL timing only; cartridge and 1541 disk-drive emulation
+are explicitly out of scope for now.
+
+- **CPU core** (`src/cpu.c`/`src/cpu.h`): the full legal 6502/6510
+  instruction set, addressing modes, and per-instruction cycle counts
+  (including conditional +1 for page-crossing and branch-taken cases),
+  talking to memory only through a `CpuBus` read/write vtable — it has
+  no idea whether it's driving a flat test-harness RAM array or the
+  real bank-switched map, which is what let it be verified in
+  isolation before `memory.c` existed. Decimal-mode ADC/SBC follow the
+  documented NMOS quirk where N/V/Z are derived from different
+  (partially uncorrected) intermediate values than the accumulator
+  result itself — see `src/cpu.c`'s header comment and
+  `op_adc()`/`op_sbc()`. IRQ is level-triggered (`cpu->irq_line`), NMI
+  is edge-triggered (`cpu_nmi()`); both are only sampled at instruction
+  boundaries, matching real hardware. Verified against Klaus Dormann's
+  6502 functional test suite plus a hand-written interrupt/reset check
+  (`tests/cpu/test_interrupts.c`) — Dormann's suite deliberately never
+  triggers a real interrupt mid-test, so it can't exercise that path.
+- **Memory map / bank switching** (`src/memory.c`/`src/memory.h`): the
+  64K RAM array, ROM loading, and the 6510 I/O port at `$00`/`$01`
+  (LORAM/HIRAM/CHAREN) deciding what's visible at
+  `$A000`-`$BFFF`/`$D000`-`$DFFF`/`$E000`-`$FFFF`. Two non-obvious
+  details worth knowing before touching this: BASIC ROM needs **both**
+  LORAM and HIRAM set, not LORAM alone; and a write always lands in RAM
+  even when ROM is what's visible for reads at that same address
+  ("write under ROM") — `memory_write()` doesn't special-case the ROM
+  regions at all because of this, only `$D000`-`$DFFF` when I/O
+  (rather than RAM or character ROM) is currently banked in there.
+  VIC-II/SID/CIA don't exist yet, so `$D000`-`$DFFF`'s I/O mode is
+  currently an inert placeholder (`IoBus`, unregistered — reads return
+  `$FF`, writes are dropped).
+- **ROM images** (`roms/`) are not checked in — Commodore's copyrighted
+  binaries. See `emu/roms/README.md`.
+
 ### Cross-project test harness: `mini6502.py`
 
 `asm/examples/mini6502.py` is a from-scratch 6502 CPU + C64Machine
 emulator (CIA keyboard/joystick emulation, `CHROUT`/`CHRIN` trapping,
 zero-page KERNAL-poisoning simulation) purpose-built to test-drive this
-project's own output — not a general VICE replacement. Both `asm/`'s demo
-tests and `C/`'s compiler tests run against it. It is not a substitute for
+project's own output — not a general VICE replacement, and not the
+same thing as `emu/`'s `c64emu` above. Both `asm/`'s demo tests and
+`C/`'s compiler tests run against it. It is not a substitute for
 real-hardware/VICE testing — several real bugs in this project's history
 were only caught on actual hardware and then back-ported into the
 emulator as a new simulated failure mode (e.g. the zero-page KERNAL
 poisoning above). If you fix a bug that a real device caught but
 `mini6502.py` didn't, consider whether the emulator should be taught to
 catch it too.
+
+Note: a second, much smaller and apparently-stale copy of this file
+also exists at `C/bin/mini6502.py` (see root `ROADMAP.md`'s "Two
+separate `mini6502.py` copies" for why this hasn't been reconciled
+yet) — check which one a command is actually resolving to before
+trusting its output.
 
 ### VICE (manual/real-hardware verification)
 
