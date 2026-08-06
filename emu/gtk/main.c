@@ -311,12 +311,6 @@ static gboolean tick(gpointer user_data) {
     return G_SOURCE_CONTINUE;
 }
 
-/* No VIC-II exists yet (step 5), so a keypress produces no visible
- * change in the window by itself - it only reaches BASIC/KERNAL (and
- * so gets echoed to the screen) once real ROM images are loaded and
- * actually running. This log line is the only feedback available
- * without that - confirms a key was recognized and which matrix
- * position it landed on. */
 static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) {
     (void)ctrl;
     (void)keycode;
@@ -325,9 +319,6 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval, guint 
     int pa, pb;
     if (lookup_key(keyval, &pa, &pb)) {
         machine_set_key(&app->machine, pa, pb, 1);
-        fprintf(stderr, "key down: %s (matrix pa=%d pb=%d)\n", gdk_keyval_name(keyval), pa, pb);
-    } else {
-        fprintf(stderr, "key down: %s (not in c64_keymap)\n", gdk_keyval_name(keyval));
     }
     return GDK_EVENT_PROPAGATE;
 }

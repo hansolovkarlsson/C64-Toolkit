@@ -603,9 +603,9 @@ emulation are explicitly out of scope for now.
   PA/PB position, standard published matrix — not exhaustive, see the
   table's own comment for what's missing) into `machine_set_key()`
   calls, so typing in the window reaches BASIC/KERNAL once real ROM
-  images are present (also logged to stderr — with no VIC-II sprite/
-  cursor feedback loop of its own yet, that's the only confirmation a
-  keypress was recognized without ROMs echoing it to the screen).
+  images are present, echoed to the real screen the same as on real
+  hardware — no separate debug logging needed anymore now that VIC-II
+  actually renders the result.
   Joystick input isn't wired into the GTK shell yet even though
   `machine_set_joystick()` exists. Built with `-std=c11`, not this
   toolkit's usual `-std=c99` — GTK4's own headers rely on C11
