@@ -121,12 +121,15 @@ void sid_tick(Sid *sid, int cycles);
  * AC-centered around 0. That's deliberate, not an oversight: real SID
  * output actually IS a DC-biased signal at the chip's output pin
  * (this is exactly why abrupt volume-register changes cause the
- * well-known "SID click/pop" on real hardware) - AC-coupling or
- * normalizing for a specific audio API's expectations is a decision
- * for whatever future code wires this into actual playback, the same
- * way vic_render_frame() hands back raw RGB pixels and leaves blitting
- * to gtk/main.c. NO filter is applied - see this file's header
- * comment. */
+ * well-known "SID click/pop" on real hardware). gtk/main.c's playback
+ * code feeds this value straight through as-is rather than shifting it
+ * - silence is always exactly 0 this way, which matters more than it
+ * sounds: an earlier version DID shift it, and every routine audio
+ * ring-buffer underrun (GTK's timer and a real-time audio thread never
+ * stay perfectly in lockstep) then produced an audible click, jumping
+ * between the shifted "silence" and the buffer's own unshifted 0 fill
+ * value - see gtk/main.c's tick() for the full story. NO filter is
+ * applied - see this file's header comment. */
 int16_t sid_output(const Sid *sid);
 
 #endif

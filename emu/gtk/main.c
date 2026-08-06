@@ -284,15 +284,22 @@ static gboolean tick(gpointer user_data) {
             if (app->sample_cycle_accum >= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE) {
                 SDL_LockAudioDevice(app->audio_dev);
                 while (app->sample_cycle_accum >= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE) {
-                    /* sid_output() is deliberately DC-biased, 0..32767,
-                     * not centered on 0 (matching real hardware - see
-                     * sid.h's own header comment on sid_output()) -
-                     * that comment explicitly defers AC-centering to
-                     * whatever code actually wires up playback, which
-                     * is exactly this line: shift down to roughly
-                     * -16384..16383 so it plays back as a normal
-                     * bipolar PCM waveform instead of a one-sided one. */
-                    int16_t sample = (int16_t)(sid_output(&app->machine.sid) - 16384);
+                    /* sid_output()'s raw value is used AS-IS, not
+                     * artificially recentered around 0 - it's already
+                     * DC-biased on real hardware (silence is always
+                     * exactly 0, not some midpoint - see sid.h's own
+                     * header comment), and critically, this way
+                     * "silence" here exactly matches audio_callback()'s
+                     * own underrun-fill value (also a literal 0). An
+                     * earlier version of this line shifted samples down
+                     * by 16384 to look more like "normal" bipolar PCM,
+                     * which meant every ring-buffer underrun (routine,
+                     * since GTK's timer and SDL's independent real-time
+                     * audio thread never stay perfectly in lockstep)
+                     * jumped between that shifted "silence" and the
+                     * callback's unshifted 0 - an audible, repeating
+                     * click even with nothing actually playing. */
+                    int16_t sample = sid_output(&app->machine.sid);
                     audio_push_sample(app, sample);
                     app->sample_cycle_accum -= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE;
                 }

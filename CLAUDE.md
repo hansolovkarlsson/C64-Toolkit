@@ -630,16 +630,28 @@ emulation are explicitly out of scope for now.
   whole number, and pushes finished samples into the ring; the callback
   only ever reads it, zero-filling on underrun rather than repeating
   stale samples. `sid_output()`'s raw output is deliberately DC-biased,
-  not centered on 0 (see `sid.h`) — this is where that finally gets
-  resolved, shifting each sample down before queuing so it plays back
-  as normal bipolar PCM. Audio failing to open is never fatal, same
-  graceful-degradation spirit as running with 0/3 ROMs loaded. Checked
-  by actually running the built binary with real ROMs loaded and
-  confirming it starts, opens the audio device without error, and
-  shuts down cleanly — not covered by an automated test the way the
-  chip core is (`tests/sid/`), since there's no meaningful way to unit-
-  test "did a real ring buffer correctly hand off to a real audio
-  thread" without an actual running audio backend.
+  not centered on 0 (see `sid.h`) — fed straight through as-is, NOT
+  shifted, so silence is always exactly 0, matching the underrun
+  filler exactly. **Real bug, found from an actual user report**: an
+  earlier version DID shift each sample by -16384 to look like
+  conventional bipolar PCM, which meant silence became a nonzero
+  constant that didn't match the underrun filler's plain 0 — every
+  routine ring-buffer underrun (GTK's timer and SDL's real-time audio
+  thread never stay perfectly in lockstep) then produced an audible
+  click, jumping between the two. `sid_output()` itself was traced by
+  hand and confirmed rock-steady at exactly 0 through boot and idle
+  with zero fluctuation, ruling out a chip-logic bug and pointing
+  straight at this mismatch instead — "random low notes repeated"
+  turned out to be a train of silence-to-silence level jumps, not real
+  chip output. Fixed by dropping the shift. Audio failing to open is
+  never fatal, same graceful-degradation spirit as running with 0/3
+  ROMs loaded. Checked by actually running the built binary with real
+  ROMs loaded and confirming it starts, opens the audio device without
+  error, and shuts down cleanly — not covered by an automated test the
+  way the chip core is (`tests/sid/`), since there's no meaningful way
+  to unit-test "did a real ring buffer correctly hand off to a real
+  audio thread" without an actual running audio backend — exactly why
+  this bug slipped through until someone actually listened to it.
 - **End-to-end boot test** (`tests/boot/`): the odd one out among
   `emu/`'s test suites — every other one (`tests/cpu/`, `tests/memory/`,
   `tests/cia/`, `tests/machine/`, `tests/vic/`) checks a single module

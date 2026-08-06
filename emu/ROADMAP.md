@@ -330,17 +330,32 @@ each piece will live.
      of its own). The callback itself only ever reads that ring,
      zero-filling on underrun rather than repeating stale samples.
      `sid_output()`'s raw output is deliberately DC-biased, not centered
-     on 0 (see `sid.h`) - `gtk/main.c` is where that finally gets
-     resolved, shifting each sample down before it's queued so it plays
-     back as normal bipolar PCM instead of a one-sided signal. Audio
-     failing to open is never fatal (same graceful-degradation spirit
-     as running with 0/3 ROMs loaded) - checked by actually running the
-     built binary with real ROMs loaded and confirming it starts,
-     opens the audio device without error, and shuts down cleanly; not
-     yet covered by an automated test the way the chip core is (there's
-     no meaningful way to unit-test "did a real ring buffer correctly
-     hand off to a real audio thread" without an actual running audio
-     backend, unlike `tests/sid/`'s pure chip-logic checks).
+     on 0 (see `sid.h`) - `gtk/main.c` feeds it straight through as-is
+     rather than shifting it, so silence is always exactly 0, matching
+     `audio_callback()`'s own underrun-fill value exactly. **Real bug,
+     caught by an actual user report right after this shipped**: the
+     first version of this DID shift each sample down by 16384 to look
+     more like conventional bipolar PCM - which meant silence became a
+     nonzero constant that DIDN'T match the underrun filler's plain 0,
+     so every routine ring-buffer underrun (GTK's timer and SDL's own
+     real-time audio thread never stay perfectly in lockstep - not rare
+     at all) produced an audible click, jumping between the two. Since
+     `sid_output()` was independently verified to hold rock-steady at
+     exactly 0 through boot and idle (traced by hand, no fluctuation at
+     all), that ruled out a chip-logic bug and pointed straight at this
+     mismatch - "random low notes repeated" was actually a train of
+     silence-to-silence level jumps, not real chip output at all. Fixed
+     by dropping the shift entirely. Audio failing to open is never
+     fatal (same graceful-degradation spirit as running with 0/3 ROMs
+     loaded) - checked by actually running the built binary with real
+     ROMs loaded and confirming it starts, opens the audio device
+     without error, and shuts down cleanly; not yet covered by an
+     automated test the way the chip core is (there's no meaningful way
+     to unit-test "did a real ring buffer correctly hand off to a real
+     audio thread" without an actual running audio backend, unlike
+     `tests/sid/`'s pure chip-logic checks - which is exactly why this
+     particular bug wasn't caught until a real person actually listened
+     to it).
    - Exact analog filter modeling - not started; revisit if it matters
      for a specific piece of software being tested against, same
      deferral reasoning as VIC-II's own approximations.
