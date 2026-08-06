@@ -17,11 +17,14 @@ in the window feeds CIA1's keyboard matrix), and a first-pass VIC-II
 (`src/vic.c` - real 40x25 hi-res text mode through screen RAM/
 character ROM/color RAM and whichever bank CIA2 selects, plus a solid
 border/background color). **This is now enough to actually boot**:
-tested against a real open-source ROM replacement (the MEGA65
-`open-roms` project), it runs unmodified all the way to a readable
-BASIC `READY.` prompt. See `tests/cpu/README.md`, `tests/memory/README.md`,
+`tests/boot/` is an automated end-to-end gate that fetches a real
+open-source ROM replacement (the MEGA65 `open-roms` project) and
+checks that the whole machine runs it unmodified all the way to a
+readable BASIC `READY.` prompt - the one test that exercises the CPU,
+memory map, both CIAs, and VIC-II together, not just each module in
+isolation. See `tests/cpu/README.md`, `tests/memory/README.md`,
 `tests/cia/README.md`, `tests/machine/README.md`, `tests/vic/README.md`,
-and this file's "Building" section below. No SID yet (no sound); no
+`tests/boot/README.md`, and this file's "Building" section below. No SID yet (no sound); no
 raster IRQs, multicolor/bitmap modes, or sprites yet either (see
 `vic.h`'s header comment for the full list of what first-pass VIC-II
 deliberately left out); no joystick wiring in the GTK shell yet even
@@ -93,7 +96,16 @@ cd tests/memory && make run                  # memory map / bank switching
 cd tests/cia && make run                     # CIA chip (timers, ports, ICR)
 cd tests/machine && make run                 # CIA <-> C64 wiring (keyboard, joystick, IRQ/NMI)
 cd tests/vic && make run                     # VIC-II (raster counter, text rendering, char ROM bank quirk)
+cd tests/boot && make fetch && make run      # end-to-end: real ROMs, boots to READY.
 ```
+
+`tests/boot/` is the one gate that isn't a single module's own
+hand-derived unit tests - it fetches [MEGA65's `open-roms`
+project](https://github.com/MEGA65/open-roms) (GPL-3.0/LGPL-3.0, an
+unencumbered KERNAL/BASIC/character ROM replacement, safe to fetch
+unlike Commodore's own ROMs - see `tests/boot/README.md`) and checks
+that the whole machine actually boots to a `READY.` prompt, catching
+integration bugs no single module's tests could.
 
 See [`ROADMAP.md`](ROADMAP.md) for what's next (VIC-II second pass, or SID).
 

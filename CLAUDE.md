@@ -169,14 +169,22 @@ cd emu/tests/machine && make run
 
 # VIC-II (raster counter, text rendering, char-ROM bank quirk): hand-written checks
 cd emu/tests/vic && make run
+
+# End-to-end: fetches MEGA65's open-roms (GPL-3.0/LGPL-3.0, unencumbered
+# by design — NOT Commodore's own copyrighted ROMs, see emu/roms/README.md)
+# and checks the whole machine actually boots to a BASIC READY. prompt
+cd emu/tests/boot && make fetch && make run
 ```
 
-All five gates must pass before building on top of the module(s) they
+All six gates must pass before building on top of the module(s) they
 cover — see `emu/tests/cpu/README.md`, `emu/tests/memory/README.md`,
-`emu/tests/cia/README.md`, `emu/tests/machine/README.md`, and
-`emu/tests/vic/README.md` for what "pass" looks like and how to
-re-derive the CPU suite's success address if a future revision of it
-moves.
+`emu/tests/cia/README.md`, `emu/tests/machine/README.md`,
+`emu/tests/vic/README.md`, and `emu/tests/boot/README.md` for what
+"pass" looks like and how to re-derive the CPU suite's success address
+if a future revision of it moves. `emu/tests/boot/` is the odd one out
+— unlike the other five, it isn't a single module's hand-derived unit
+tests, it's the only gate that exercises the CPU, memory map, both
+CIAs, and VIC-II together against real third-party system software.
 
 ## Architecture
 
@@ -369,8 +377,9 @@ explicitly out of scope for now.
   passive storage only), bad lines, multicolor/bitmap modes, sprites,
   light pen — rendering happens once per whole frame, not scanline by
   scanline, so none of that is possible yet regardless. Verified
-  against hand-derived expectations (`tests/vic/`) and against the
-  MEGA65 `open-roms` project's real ROMs actually booting.
+  against hand-derived expectations (`tests/vic/`) and, together with
+  the CPU/memory/CIA modules it depends on, against real system
+  software actually booting (`tests/boot/` — see below).
 - **Machine wiring** (`src/machine.c`/`src/machine.h` — replaces the ad
   hoc CPU+Memory wiring `gtk/main.c` used to do inline): ties CPU +
   Memory + CIA1 + CIA2 + VIC-II together. Registers one `IoBus` with
@@ -428,6 +437,22 @@ explicitly out of scope for now.
   typedef-redefinition tolerance (`G_DECLARE_*_TYPE` macros);
   `src/*.c` itself stays plain C99-compatible regardless of which
   standard compiles it.
+- **End-to-end boot test** (`tests/boot/`): the odd one out among
+  `emu/`'s test suites — every other one (`tests/cpu/`, `tests/memory/`,
+  `tests/cia/`, `tests/machine/`, `tests/vic/`) checks a single module
+  in isolation against hand-derived expectations; this fetches a real,
+  unencumbered open-source ROM replacement (MEGA65's `open-roms`,
+  GPL-3.0/LGPL-3.0 — safe to auto-fetch, unlike Commodore's own ROMs,
+  see `emu/roms/README.md`) and runs the whole `Machine` from reset
+  until "READY." literally appears in screen RAM (in C64 screen codes,
+  not ASCII/PETSCII), the same signal a real C64 gives once BASIC has
+  finished initializing. Catches integration bugs no module's own unit
+  tests could — this is exactly how the VIC-II raster counter's absence
+  was first noticed, by tracing a real boot getting stuck polling
+  `$D012` (see `emu/ROADMAP.md`'s step 5 entry) — so treat a `tests/boot/`
+  failure as "something in the CPU/memory/CIA/VIC-II integration broke,
+  go check each module's own suite to narrow it down," not as its own
+  root cause.
 
 ### Cross-project test harness: `mini6502.py`
 

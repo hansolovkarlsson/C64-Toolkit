@@ -104,14 +104,17 @@ each piece will live.
    multicolor/extended-background-color text modes, bitmap modes,
    sprites, and light pen - all explicitly out of scope for "first
    pass," see `vic.h`'s header comment. Verified against hand-derived
-   expectations (`tests/vic/`) AND against a real open-source ROM
-   replacement (the MEGA65 `open-roms` project) actually booting to a
-   readable BASIC `READY.` prompt with legible boot-menu text - the
-   first time this emulator has run unmodified third-party C64 system
-   software at all, not just its own test fixtures. "Bad lines" (the
-   cycle-stealing DMA quirk a lot of real software's timing depends
-   on) remains its own explicitly-tracked follow-up, not assumed to
-   fall out of a future pass for free.
+   expectations (`tests/vic/`) AND, for the first time, against real
+   third-party C64 system software rather than just this project's own
+   test fixtures: `tests/boot/` fetches a real open-source ROM
+   replacement (the MEGA65 `open-roms` project - GPL-3.0/LGPL-3.0,
+   unencumbered by design, safe to auto-fetch unlike Commodore's own
+   ROMs) and checks the whole machine boots it unmodified to a readable
+   BASIC `READY.` prompt - a genuine end-to-end integration gate, not
+   just another module-level unit test. "Bad lines" (the cycle-stealing
+   DMA quirk a lot of real software's timing depends on) remains its
+   own explicitly-tracked follow-up, not assumed to fall out of a
+   future pass for free.
 6. **VIC-II, second pass** - everything step 5 explicitly deferred:
    raster IRQs (real `$D011`/`$D012` write-sets-compare-target
    semantics, `$D019`/`$D01A` wired into `cpu.irq_line` the same way

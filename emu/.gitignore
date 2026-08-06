@@ -6,6 +6,7 @@ tests/memory/test_memory
 tests/cia/test_cia
 tests/machine/test_machine
 tests/vic/test_vic
+tests/boot/test_boot
 
 # ROM images (Commodore's copyrighted KERNAL/BASIC/character binaries)
 # - dump your own from a C64 you own, never commit these. See
@@ -18,3 +19,7 @@ roms/*
 # tests/cpu/README.md.
 tests/cpu/*.bin
 tests/cpu/*.lst
+
+# MEGA65's open-roms (GPL-3.0/LGPL-3.0) - fetched on demand via
+# `make fetch` in tests/boot/, not vendored. See tests/boot/README.md.
+tests/boot/roms/
