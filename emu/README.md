@@ -45,8 +45,12 @@ gate - nothing in BASIC's own boot path touches SID registers). See
 `tests/boot/README.md`, and this file's "Building" section below.
 Joystick input works too - any SDL_GameController-recognized pad
 (Xbox controllers included) drives port 2, the port every
-joystick-aware demo in `../asm/examples/` reads. See
-[`ROADMAP.md`](ROADMAP.md) for what's next.
+joystick-aware demo in `../asm/examples/` reads. `--prg` also now
+correctly runs a program that returns normally after `main()` instead
+of looping forever (the common case for `cc64`-compiled programs,
+unlike most hand-written `asm/examples/` demos) - see `ROADMAP.md`'s
+"Running `cc64`'s output" for the real injection bug this caught and
+fixed. See [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
 

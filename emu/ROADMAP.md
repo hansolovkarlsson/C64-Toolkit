@@ -510,6 +510,73 @@ header comment), so holding "last sample" during genuine silence still
 just holds 0, identical to before. Confirmed fixed by ear against
 `bounce.asm` after the change.
 
+## Running `cc64`'s output
+
+`cc64` (`../C/`) output had never been run against `c64emu` before -
+only against its own `mini6502.py`-based test suite, which traps
+`CHROUT` in software rather than executing real KERNAL code (see
+`../C/README.md`'s "Testing"). `../C/examples/graphics_demo.c` (new,
+alongside this) is a small real program exercising `printf`, and
+`poke()`-based `$D020`/`$D021`/screen-RAM/color-RAM writes in nested
+loops - the first genuinely new `cc64` feature test run against this
+emulator rather than `mini6502.py`. Verified via the same headless
+`vic_render_frame()`-to-image technique as "Running `asm/`'s example
+programs" above (no screen-recording access in this development
+sandbox): text prints correctly and the poked 8x8 square renders in
+the right place and color, PETSCII-cased correctly by the real KERNAL,
+not just by `mini6502.py`'s simplified CHROUT trap.
+
+**A real bug this immediately caught, in `--prg` injection itself, not
+in `cc64`**: `graphics_demo.prg` crashed almost immediately after
+being jumped to - the real KERNAL's default BRK handler took over and
+printed `BRK AT $2020` to the screen, with none of the program's own
+output ever appearing. Bisected with a small headless harness that
+flags the instant the CPU's PC first enters `__rt_cstack`'s 4KB
+call-stack buffer (`cc64`'s own software call-stack region - always
+zero-filled, so landing there is always a BRK, i.e. always a wild
+jump): the crash traced back to `main()`'s own perfectly correct
+closing `RTS`, and the top-level `RTS` right after it, both executing
+exactly as intended - the actual fault was one level up. Confirmed
+this had nothing to do with `cc64` specifically by reproducing the
+identical crash (same address, same stack pointer) with a trivial
+hand-assembled `.asm` program built directly with `c64asm` that also
+just prints something and `rts`s, no `cc64` involved at all.
+
+Root cause: on real hardware, typing `RUN` executes a `SYS n` BASIC
+line via a genuine interpreter `JSR`, which pushes BASIC's own
+interpreter return address onto the hardware stack - so a program that
+finishes and `RTS`s lands safely back inside BASIC, which then notices
+there's nothing left to run and reprints `READY.` on its own. The
+`--prg` shortcut (`try_inject_prg()`, `gtk/main.c`) skips that `JSR`
+entirely and just sets `cpu.pc` directly - fine for every `asm/examples/`
+demo exercised this way previously, since every one of them loops
+forever and never reaches its own top-level `RTS`, but a genuinely-
+terminating program's `RTS` then pops whatever garbage happened to be
+on the hardware stack at the moment of injection instead. `cc64`
+programs are the first ones tested this way that actually return
+normally after `main()` - real ordinary control flow, not something
+`cc64` or this specific demo did wrong.
+
+Fixed by `push_prg_return_trampoline()`: before jumping to the `SYS`
+target, push a real two-byte return address, the same as a genuine
+`JSR` would have - just pointing at a tiny `JMP`-to-self trampoline
+(poked into `$033C`, the classic C64 datassette buffer - 192 bytes of
+RAM never touched by BASIC/KERNAL unless a real tape operation
+happens, a well-known safe scratch spot) instead of a real BASIC ROM
+address. Landing back inside BASIC's own interpreter properly (so
+`READY.` reappears and the machine stays interactive afterward) would
+need a specific real ROM entry point, which varies by KERNAL build
+(this project targets MEGA65 `open-roms`, not Commodore's own ROMs,
+and that address isn't independently documented) - a harmless infinite
+loop is the ROM-independent choice, and it's also exactly what a
+`--prg` demo that never returns already leaves the machine doing
+regardless. Verified: the full 7-gate regression suite (boot cycle
+count unchanged at 180030 - this doesn't touch the boot path at all,
+only `--prg` injection), and re-running the same headless capture
+against `graphics_demo.prg`, `hello.prg` (`../C/tests/hello.c`), and
+the same minimal hand-assembled terminating `.asm` program - all three
+now run to completion and render correctly with no crash.
+
 ## Joystick input
 
 ~~Done~~: `gtk/main.c`'s `poll_joystick()` drives `machine_set_joystick()`'s

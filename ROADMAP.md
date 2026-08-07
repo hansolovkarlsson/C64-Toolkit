@@ -55,6 +55,16 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   `printf`'s `%u` and `lib/print.h`'s `print_uint()` both became
   possible for the first time as a result. See `C/README.md`'s "How
   unsigned works".
+- **`cc64` output ran against `c64emu` (`emu/`) for the first time** —
+  previously only verified against `mini6502.py`, which traps `CHROUT`
+  in software rather than running real KERNAL code. `C/examples/
+  graphics_demo.c` (new) is a small real program exercising `printf`
+  and `poke()`-based VIC-II/screen-RAM/color-RAM access, and it
+  immediately caught a real bug — not in `cc64`, but in `emu/`'s
+  `--prg` injection shortcut, which had never before been used with a
+  program that returns normally after `main()` instead of looping
+  forever. See `emu/ROADMAP.md`'s "Running `cc64`'s output" for the
+  full bisection and fix.
 
 ## Open cross-project questions
 

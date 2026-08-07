@@ -787,7 +787,27 @@ emulation are explicitly out of scope for now.
   real win-conditions against `mini6502.py` and would need redoing
   against this emulator's own `machine_set_key()`/
   `machine_set_joystick()` API for equivalent coverage; this was a
-  one-off manual verification pass, see `emu/ROADMAP.md`.
+  one-off manual verification pass, see `emu/ROADMAP.md`. Also used to
+  run `cc64` (`C/`) output for the first time — every `asm/examples/`
+  demo tested this way loops forever, so a program that legitimately
+  `RTS`s back to BASIC after finishing (the normal case for a `cc64`
+  program, unlike a game) had never been exercised through this path
+  before, and it caught a real bug in `try_inject_prg()` itself:
+  jumping straight to the `SYS` target via `cpu.pc = sys_target` never
+  pushed a return address the way a genuine `JSR` (what BASIC's own
+  `SYS` execution does on real hardware) would have, so that RTS
+  popped whatever garbage was on the hardware stack instead — reliably
+  reproducible with a trivial hand-assembled `.asm` program too,
+  confirming it had nothing to do with `cc64` itself. Fixed by
+  `push_prg_return_trampoline()`: push a real two-byte return address
+  before jumping in, pointing at a tiny `JMP`-to-self trampoline poked
+  into `$033C` (the classic C64 datassette buffer, safe unused RAM)
+  rather than a real BASIC ROM address — landing back inside BASIC's
+  actual interpreter would need a specific ROM entry point that varies
+  by KERNAL build, so a harmless infinite loop is the ROM-independent
+  choice instead, matching what a `--prg` demo that never returns was
+  already effectively doing. See `emu/ROADMAP.md`'s "Running `cc64`'s
+  output" for the full bisection.
 
 ### Cross-project test harness: `mini6502.py`
 
