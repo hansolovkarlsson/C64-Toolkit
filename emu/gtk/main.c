@@ -288,20 +288,51 @@ static void audio_push_sample(App *app, int16_t sample) {
 
 /* Runs on SDL's own audio thread, never the GTK main thread - see App's
  * ring-buffer comment for why this only ever reads the ring, never
- * touches Sid. Underruns (the emulator falling behind real time, or
- * simply nothing enabled on any SID voice) are filled with silence
- * rather than left as garbage/repeated stale samples. */
+ * touches Sid. Underruns (the emulator's persistent few-percent real-
+ * time deficit - see this file's audio-pacing header comment for why
+ * that hasn't been eliminated outright) hold the LAST real sample
+ * rather than snapping to silence.
+ *
+ * Real bug, caught by ear testing asm/examples/bounce.asm: snapping
+ * straight to 0 on every underrun is only inaudible while the actual
+ * signal is ALSO near 0 (true silence, or a fully-decayed envelope) -
+ * during a short one-shot sound effect's decay, the signal is very
+ * much NOT near 0 for most of its brief life, and an underrun landing
+ * there forces an abrupt jump down to 0 and then back up once real
+ * samples resume, a genuine amplitude discontinuity, not a rendering
+ * bug. Heard as a short "scratch" right at the tail of bounce.asm's
+ * bounce-sound bleep specifically because that one-shot's decay (AD=
+ * $06, an already-fast rate) burns through most of its audible range
+ * in under 150ms - short enough that the routine ~5-10% underrun rate
+ * (see this file's header comment) has good odds of landing exactly
+ * during that brief loud window, where a jump is most audible, rather
+ * than during the long tail where the signal's already quiet. Confirmed
+ * directly with a headless capture that reproduced tick()'s exact
+ * pacing against real jittered timing: every single amplitude jump
+ * bigger than a real waveform step could produce coincided with an
+ * underrun-filled sample (100% correlation); switching the fill
+ * strategy to "hold last sample" against the SAME underrun rate
+ * eliminated every one of those jumps. Holding rather than
+ * interpolating is deliberately simple - a few milliseconds of a
+ * stale-but-continuous sample is inaudible, while computing a real
+ * interpolation would need lookahead this producer/consumer split
+ * doesn't have. Local `static` rather than an App field: this is
+ * audio-thread-only state SDL guarantees is never touched by the
+ * locked main-thread section, so it doesn't need App's cross-thread
+ * synchronization at all. */
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
     App *app = userdata;
     int16_t *out = (int16_t *)stream;
     int n = len / (int)sizeof(int16_t);
+    static int16_t last_sample = 0;
     for (int i = 0; i < n; i++) {
         if (app->audio_ring_count > 0) {
             out[i] = app->audio_ring[app->audio_ring_read];
             app->audio_ring_read = (app->audio_ring_read + 1) % AUDIO_RING_SAMPLES;
             app->audio_ring_count--;
+            last_sample = out[i];
         } else {
-            out[i] = 0;
+            out[i] = last_sample;
         }
     }
 }

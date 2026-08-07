@@ -485,6 +485,31 @@ above. Eliminating it outright would mean making the WHOLE emulated
 machine's timing genuinely real-time-locked, not just audio - a bigger
 change than this file alone, not undertaken without weighing it first.
 
+**A fourth real bug**, this time caught testing `bounce.asm` specifically:
+the residual underrun rate above is inaudible when it lands during
+actual silence, but `audio_callback()` was filling every underrun with
+a hard 0 regardless of what the signal was actually doing at that
+moment - and `bounce.asm`'s bounce-sound one-shot (`PLAY_SOUND $18,
+$06, $00, ...`, a fast AD=$06 decay that burns through most of its
+audible amplitude in well under 150ms) spends most of its brief life
+NOT near 0, unlike a long sustained tone's mostly-quiet tail. An
+underrun landing during that loud window forces an abrupt jump down to
+0 and back up once real samples resume - a genuine amplitude
+discontinuity, heard as a short "scratch" right at the tail of the
+bleep. Confirmed with a headless capture reproducing `tick()`'s exact
+interleaved/fixed-clock pacing against real jittered timing on a
+separate consumer thread pulling at true 44.1kHz: every amplitude jump
+larger than a real waveform step coincided with an underrun-filled
+sample (100% correlation, ~10% underrun rate in that run). Fix:
+`audio_callback()` now holds the last real sample on underrun instead
+of snapping to 0 - re-running the identical capture against the same
+underrun rate produced zero discontinuities. Verified this doesn't
+reintroduce the earlier DC-offset click bug either: true silence
+already decays to a stored value of exactly 0 (see `sid_output()`'s own
+header comment), so holding "last sample" during genuine silence still
+just holds 0, identical to before. Confirmed fixed by ear against
+`bounce.asm` after the change.
+
 ## Not yet scheduled
 
 - **Light pen** - a peripheral vanishingly few pieces of C64 software

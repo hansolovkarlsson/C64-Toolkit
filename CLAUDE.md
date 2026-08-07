@@ -714,7 +714,22 @@ emulation are explicitly out of scope for now.
   rather than either of the two more severe bugs above. Eliminating it
   outright would mean making the whole emulated machine's timing
   genuinely real-time-locked, not just audio — a bigger change, not
-  undertaken without weighing it first.
+  undertaken without weighing it first. **A fourth real bug**, caught
+  testing `asm/examples/bounce.asm`: that residual underrun rate is
+  only inaudible while the signal is ALSO near silence — `bounce.asm`'s
+  bounce-sound one-shot decays fast (well under 150ms) and spends most
+  of its life at real amplitude, so an underrun landing in that window
+  used to force an abrupt jump down to `audio_callback()`'s old hard-0
+  fill and back up once real samples resumed, a genuine discontinuity
+  heard as a short "scratch" at the tail of the bleep. Confirmed via a
+  headless capture reproducing `tick()`'s exact pacing against real
+  jittered timing: every amplitude jump bigger than a real waveform
+  step coincided with an underrun-filled sample. Fixed by holding the
+  last real sample on underrun instead of snapping to 0 (a `static`
+  local inside `audio_callback()`, audio-thread-only state that needs
+  no cross-thread synchronization) — re-running the same capture at the
+  same underrun rate produced zero discontinuities, and true silence is
+  unaffected since it already decays to a stored value of exactly 0.
 - **End-to-end boot test** (`tests/boot/`): the odd one out among
   `emu/`'s test suites — every other one (`tests/cpu/`, `tests/memory/`,
   `tests/cia/`, `tests/machine/`, `tests/vic/`) checks a single module
