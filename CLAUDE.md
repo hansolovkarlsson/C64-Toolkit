@@ -596,7 +596,16 @@ emulation are explicitly out of scope for now.
   `VIC_CANVAS_W * 4` — that can have alignment padding), then blits it
   in one call with `cairo_image_surface_create_for_data()` +
   `cairo_paint()` rather than per-pixel `cairo_rectangle()`/`cairo_fill()`
-  calls, which wouldn't keep up at ~50Hz for a canvas this size. Runs
+  calls, which wouldn't keep up at ~50Hz for a canvas this size. The
+  window opens at `WINDOW_ZOOM_DEFAULT` (2x) the VIC's native
+  ~403x284 canvas — too small to read comfortably at 1x on a modern
+  display — and stays freely resizable from there: the drawing area is
+  set to `hexpand`/`vexpand`, and `draw_screen()` scales the native-
+  resolution render (nearest-neighbor filtering, so pixel art stays
+  crisp rather than blurring) up to whatever size the widget's draw
+  callback reports each frame, uniformly and letterboxed to preserve
+  the C64's aspect ratio — so dragging the window to a new size is the
+  zoom control, not a fixed multiplier or a separate menu action. Runs
   fine with 0/3 ROMs loaded (the CPU just executes a harmless BRK loop
   on zeroed memory). Keyboard events are real: GDK key events are
   translated through `c64_keymap[]` (GDK keyval -> C64 keyboard-matrix

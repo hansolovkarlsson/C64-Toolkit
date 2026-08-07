@@ -50,6 +50,12 @@
 #define CYCLES_PER_FRAME (PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME)
 #define FRAME_MS 20
 
+/* The window opens at this multiple of the VIC's native canvas size
+ * (see activate()) - the window is still ordinarily resizable, and
+ * draw_screen() scales the render to fill whatever size it currently
+ * is, so this only picks the STARTING zoom level, not a cap. */
+#define WINDOW_ZOOM_DEFAULT 2
+
 /* Audio output (../ROADMAP.md step 7's last piece): SID itself (see
  * sid.h) has no notion of a sample rate - sid_tick() already advances
  * in lockstep with the CPU inside machine_step(), same as CIA/VIC, so
@@ -226,10 +232,18 @@ static int lookup_key(guint keyval, int *pa, int *pb) {
     return 0;
 }
 
+/* Renders at the VIC's native VIC_CANVAS_W x VIC_CANVAS_H resolution
+ * into app->pixel_buf as always, then scales that surface up to fill
+ * whatever size the drawing area's widget actually is (width/height,
+ * previously ignored) - this is what makes "zoom" a real window-resize
+ * rather than a fixed multiplier: the drawing area is set to expand
+ * with the window (see activate()), so dragging the window bigger
+ * directly zooms the picture. Scale is uniform (min of the two axis
+ * ratios) and the result is centered, so resizing to a non-4:3-ish
+ * shape letterboxes/pillarboxes instead of distorting the image -
+ * real C64 software assumes square-ish pixels. */
 static void draw_screen(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data) {
     (void)area;
-    (void)width;
-    (void)height;
     App *app = user_data;
 
     uint8_t bank = machine_vic_bank(&app->machine);
@@ -238,7 +252,23 @@ static void draw_screen(GtkDrawingArea *area, cairo_t *cr, int width, int height
     cairo_surface_t *surface = cairo_image_surface_create_for_data(
         (unsigned char *)app->pixel_buf, CAIRO_FORMAT_RGB24,
         VIC_CANVAS_W, VIC_CANVAS_H, app->pixel_stride * 4);
+
+    double scale_x = (double)width / VIC_CANVAS_W;
+    double scale_y = (double)height / VIC_CANVAS_H;
+    double scale = scale_x < scale_y ? scale_x : scale_y;
+    if (scale <= 0.0) scale = 1.0;
+
+    double scaled_w = VIC_CANVAS_W * scale;
+    double scaled_h = VIC_CANVAS_H * scale;
+    cairo_translate(cr, (width - scaled_w) / 2.0, (height - scaled_h) / 2.0);
+    cairo_scale(cr, scale, scale);
+
+    /* Nearest-neighbor rather than cairo's default smooth filtering -
+     * a blurred-upscale look reads as wrong for pixel-art-era C64
+     * software; crisp blocky pixels at 2x/3x matches how every other
+     * C64 emulator scales its display. */
     cairo_set_source_surface(cr, surface, 0, 0);
+    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_NEAREST);
     cairo_paint(cr);
     cairo_surface_destroy(surface);
 }
@@ -435,10 +465,15 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
 
     GtkWidget *window = gtk_application_window_new(gtk_app);
     gtk_window_set_title(GTK_WINDOW(window), "c64emu");
-    /* Matches the drawing area's own fixed content size exactly - a
-     * bigger default would leave dead space around it, since nothing
-     * here stretches the canvas to fill extra window area. */
-    gtk_window_set_default_size(GTK_WINDOW(window), VIC_CANVAS_W, VIC_CANVAS_H);
+    /* The native VIC_CANVAS_W x VIC_CANVAS_H resolution (~403x284) is
+     * tiny on a modern display, so the window opens at a readable
+     * WINDOW_ZOOM_DEFAULT multiple of it instead - draw_screen() scales
+     * app->pixel_buf's native-resolution render up to whatever size the
+     * drawing area actually is, so this is just the STARTING size, not
+     * a fixed multiplier: the window is ordinarily resizable (GTK4
+     * default), and dragging it to any other size zooms the picture to
+     * match, letterboxed to preserve the C64's aspect ratio. */
+    gtk_window_set_default_size(GTK_WINDOW(window), VIC_CANVAS_W * WINDOW_ZOOM_DEFAULT, VIC_CANVAS_H * WINDOW_ZOOM_DEFAULT);
 
     /* cairo_image_surface_create_for_data() requires a stride that
      * matches cairo's own alignment rules for the format, which isn't
@@ -449,8 +484,18 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
     app->pixel_buf = calloc((size_t)app->pixel_stride * VIC_CANVAS_H, sizeof(uint32_t));
 
     app->drawing_area = gtk_drawing_area_new();
+    /* Content width/height below is only the MINIMUM natural size GTK
+     * will lay out (still the native resolution, so the window can
+     * never shrink smaller than one real C64 pixel per source pixel) -
+     * hexpand/vexpand is what lets the widget actually grow to fill
+     * extra window area on resize, which draw_screen() then scales
+     * into. Without these two calls the drawing area stays pinned to
+     * its natural size and resizing the window would just add dead
+     * space around it, not zoom anything. */
     gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(app->drawing_area), VIC_CANVAS_W);
     gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(app->drawing_area), VIC_CANVAS_H);
+    gtk_widget_set_hexpand(app->drawing_area, TRUE);
+    gtk_widget_set_vexpand(app->drawing_area, TRUE);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(app->drawing_area), draw_screen, app, NULL);
     gtk_window_set_child(GTK_WINDOW(window), app->drawing_area);
 

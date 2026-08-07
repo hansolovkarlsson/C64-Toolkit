@@ -108,7 +108,13 @@ real VIC-II output - see `vic.h`'s header comment for exactly what's
 modeled (40x25 hi-res, multicolor, and extended-background-color text
 mode, standard and multicolor bitmap mode, all 8 hardware sprites,
 border/background color, DEN blanking, raster IRQs, bad lines) - light
-pen is not planned, see `ROADMAP.md`. It also plays real SID audio
+pen is not planned, see `ROADMAP.md`. The window opens at 2x the VIC's
+native ~403x284 resolution (too small to read comfortably on a modern
+display at 1x) and is freely resizable from there - the picture scales
+(nearest-neighbor, so pixel art stays crisp rather than blurring) to
+fill whatever size the window actually is, letterboxed to preserve the
+C64's aspect ratio, so dragging the window to a new size is how you
+zoom in/out. It also plays real SID audio
 through SDL2 (`SDL_OpenAudioDevice` + a callback, see `gtk/main.c`) -
 if SDL audio fails to open for any reason, that's never fatal, the
 emulator just runs silently, the same as running with 0/3 ROMs. It
