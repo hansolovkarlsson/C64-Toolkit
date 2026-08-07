@@ -318,12 +318,15 @@ each piece will live.
      its OWN dedicated real-time thread, so the two are bridged through
      a small ring buffer rather than letting the callback touch `Sid`
      directly, which would be a genuine data race, not just a style
-     concern. `tick()` decides how many 44.1kHz samples are owed against
-     ACTUAL elapsed real time since the previous call (`g_get_monotonic_
-     time()`, NOT an assumed cycle-derived rate - see this section's own
-     "second real bug" entry below for why that distinction matters),
-     accumulating fractionally since that ratio isn't a whole number,
-     and pushes finished samples into
+     concern. `tick()` decides how many of SID's real clock cycles
+     (`SID_CLOCK_HZ`, the SAME fixed nominal clock CPU/VIC/CIA are all
+     implicitly paced against, NOT measured real wall-clock time - see
+     this section's own "second real bug" entry below for why that
+     distinction matters) are owed per 44.1kHz sample, interleaved with
+     the cycle-stepping loop itself (one `sid_output()` call per small
+     slice of cycles, not a burst afterward - see the same entry for
+     why that's equally load-bearing), accumulating fractionally since
+     that ratio isn't a whole number, and pushes finished samples into
      the ring under `SDL_LockAudioDevice()`/`SDL_UnlockAudioDevice()` -
      SDL's own documented mechanism for exactly this producer/consumer
      split (locking pauses callback invocation, letting the main thread
@@ -444,16 +447,43 @@ OS scheduling overhead, nothing exotic) was a continuous ~5% sample
 production deficit against SDL's own hardware-clocked 44.1kHz
 consumption - not occasional jitter a bigger ring buffer could have
 absorbed, a systematic rate mismatch that drains any fixed-size buffer
-eventually. Fixed by pacing sample generation against ACTUAL elapsed
-wall-clock time between `tick()` calls (`g_get_monotonic_time()`)
-instead of assumed cycle-derived timing, completely decoupled from
-`FRAME_MS`/`CYCLES_PER_FRAME` and from whatever `machine_step()` itself
-consumed that call - `sid_tick()` still stays perfectly cycle-accurate
-regardless (it only ever depends on cycles actually consumed, never on
-real time), only the SAMPLE-PULLING cadence changed. Reverified with
-the same temporary ring-buffer instrumentation: underrun events dropped
-to zero and stayed there for the rest of a 20-second live run, after a
-brief expected fill-up period at startup.
+eventually. First attempted fix: pace sample generation against ACTUAL
+elapsed wall-clock time between `tick()` calls (`g_get_monotonic_time()`)
+instead of assumed cycle-derived timing - underrun events genuinely
+dropped to zero, confirmed with the same instrumentation. But this
+introduced a THIRD real bug, caught immediately by ear: every sound
+started coming out as the same low, warbling tone. Root cause of THAT:
+`sid_output()` only ever reads `Sid`'s current instantaneous state, it
+doesn't advance anything itself - real-time pacing had moved sample
+generation to run in a burst AFTER the whole frame's cycle-stepping
+loop finished, rather than interleaved with it, so all ~882 samples in
+a frame read back the exact same frozen oscillator state, downsampling
+every waveform to ~50Hz and aliasing anything above ~25Hz into low
+beat-frequency warbling. Restoring the interleaving alone wasn't
+enough either - pacing the interleaved accumulator against real time
+still measurably shifted pitch (confirmed by capturing real output and
+counting zero-crossings: a tone that should measure ~720Hz measured
+~520-550Hz instead), because it decoupled audio from the SAME fixed
+nominal clock (`CYCLES_PER_FRAME`/`FRAME_MS`) every other subsystem -
+CPU speed, VIC-II animation speed, keyboard timing - is implicitly
+paced against regardless of real-time drift. The actual fix: keep
+sample generation interleaved with cycle-stepping (required for a real
+waveform at all) AND paced against the fixed nominal clock (required
+for correct, stable pitch, consistent with the rest of the machine) -
+verified both ways this time: captured output confirmed correct,
+stable ~720Hz across a multi-second capture, and the original
+"broken up miss sound" is gone. The underrun problem itself is only
+partially addressed as a result - measured directly, enlarging the
+ring buffer from 8192 to 65536 samples changed nothing about the
+underrun rate (a persistent deficit drains any size buffer to the same
+near-empty equilibrium, a bigger buffer only delays getting there) -
+so `AUDIO_RING_SAMPLES` landed at a modest 16384 (mild jitter headroom,
+no pretense of fixing persistent drift) and a low, roughly 4-5%
+residual underrun rate remains, now manifesting as occasional brief
+(a few ms) silence gaps rather than either of the two more severe bugs
+above. Eliminating it outright would mean making the WHOLE emulated
+machine's timing genuinely real-time-locked, not just audio - a bigger
+change than this file alone, not undertaken without weighing it first.
 
 ## Not yet scheduled
 
