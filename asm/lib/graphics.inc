@@ -8,6 +8,7 @@
 ;   CLEAR_BITMAP bitmap_addr       macro
 ;   SET_SCREEN_COLOR value         macro
 ;   SPRITE_INIT data, color, x, y  macro
+;   DISABLE_CURSOR                 macro
 ;   wait_frame                     subroutine
 ;   sprite0_bounce_step            subroutine
 ;   sprite0_explode                subroutine
@@ -220,6 +221,33 @@
         sta SPRITE0_Y
         lda #%00000001
         sta SPRITE_ENABLE
+.endmacro
+
+; DISABLE_CURSOR -- call once, early in setup, in any program that
+; SYS's into machine code from BASIC and takes over the screen (sprites,
+; bitmap graphics, or just its own text). The KERNAL's background IRQ
+; handler keeps running after a SYS -- real hardware behavior, not
+; specific to this project (see input.inc's own header comment for the
+; same fact applied to keyboard scanning) -- and it includes blinking
+; the text cursor at wherever it was left, forever, since nothing else
+; here ever touches the KERNAL's own cursor-position variables. Typing
+; LOAD+RUN by hand usually leaves that position somewhere unobtrusive
+; after all the scrolling; loading a program some OTHER way (e.g.
+; c64emu's own --prg shortcut, which jumps in from the very first
+; READY. with no typing at all) can leave it sitting in the middle of
+; the screen instead -- a real, previously-invisible bug in pong.asm
+; caught this way, a small white block blinking in the middle of the
+; play field that traced back to screen code $A0 (the real KERNAL
+; cursor character) never being suppressed. $CC is the standard,
+; widely-documented KERNAL cursor-enable flag: 0 = blinking, nonzero =
+; disabled -- this doesn't clear a cursor character already on screen,
+; only stops the IRQ from drawing another one; call this before
+; anything else could still be showing the character from before this
+; program even started (in practice: before the first wait_frame/
+; screen-clear a caller does its own way).
+.macro DISABLE_CURSOR
+        lda #1
+        sta $cc
 .endmacro
 
 ; wait_frame -- busy-waits for a raster line near the bottom of the

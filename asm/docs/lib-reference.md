@@ -36,7 +36,7 @@ for the full behavior.
 | `lib/text.inc` | `PRINT msg`, `CLS`, `NEWLINE`, the `print_msg` subroutine they're built on, `str_equal` for comparing typed input against known keywords, and `SET_LOWERCASE_CHARSET`/`SET_UPPERCASE_CHARSET`/`DISABLE_CHARSET_SWITCH`/`ENABLE_CHARSET_SWITCH` for the runtime character-set switch this assembler's `.charset lower` directive needs paired with it — see `c64asm-reference.md` §6. |
 | `lib/input.inc` | `CIA_KEYBOARD_SETUP`, `read_joy2`, `READ_KEY column, mask` for joystick/keyboard-matrix input; `read_line` and `extract_word` for reading and tokenizing a typed line via `CHRIN`. |
 | `lib/keyboard.inc` | Named `KEY_<NAME>_COL`/`KEY_<NAME>_ROW`/`KEY_<NAME>_CODE` constants for every key on the keyboard matrix (pairs with `input.inc`'s `READ_KEY`), and `wait_any_key` for a blocking "press any key" read that returns which key in A. |
-| `lib/graphics.inc` | `BITMAP_MODE_ON addr`, `BITMAP_MODE_OFF`, `CLEAR_BITMAP addr`, `SET_SCREEN_COLOR value`, `SPRITE_INIT data, color, x, y` for bitmap/sprite setup; `wait_frame` for raster-synced timing; `sprite0_bounce_step` for animating a sprite bouncing within a rectangular area; `sprite0_explode` for a caller-colored expand-flash-hide effect (an explosion, a hit, anything that needs a sprite to visibly go away). |
+| `lib/graphics.inc` | `BITMAP_MODE_ON addr`, `BITMAP_MODE_OFF`, `CLEAR_BITMAP addr`, `SET_SCREEN_COLOR value`, `SPRITE_INIT data, color, x, y` for bitmap/sprite setup; `DISABLE_CURSOR` to stop the KERNAL's background IRQ from blinking the text cursor over your own graphics; `wait_frame` for raster-synced timing; `sprite0_bounce_step` for animating a sprite bouncing within a rectangular area; `sprite0_explode` for a caller-colored expand-flash-hide effect (an explosion, a hit, anything that needs a sprite to visibly go away). |
 | `lib/sound.inc` | `SID_INIT`, `PLAY_SOUND freq_hi, ad, sr, waveform`, `engine_sound_on`/`engine_sound_off`. |
 | `lib/music.inc` | `MUSIC_INIT melody_wave, melody_ad, melody_sr, bass_wave, bass_ad, bass_sr`, `music_tick` (call once per frame), `music_stop`. A two-voice sequencer, not a fixed sound effect — the note data (frequency/duration tables) is the caller's own, the same way this file doesn't provide the tune itself, only the player. See `music_demo.asm` for a complete, real worked example. |
 | `lib/math.inc` | `MULT_2`/`MULT_4`/`MULT_8`/`MULT_16` and `DIV_2`/`DIV_4`/`DIV_8`/`DIV_16` — multiply or (truncating, unsigned) divide A in place by a small power of two, via left/right shifts (the 6502 has no multiply or divide instruction); need no zero page. Also `MULT_3`/`MULT_5`/`MULT_6`/`MULT_7`/`MULT_9`/`MULT_10`/`MULT_12` for the smallest non-power-of-two sizes, which — unlike the power-of-two macros — need a 1-byte zero-page `mult_scratch` declared first (no non-power-of-two `DIV_N`; see the file's own header comment for why). Meant for indexing an array of `.struct`-sized records and the reverse — see `c64asm-reference.md` §10's "Indexing an array of records". |
@@ -302,6 +302,45 @@ immediately after `BITMAP_MODE_ON`:
                                                   ; reaches into the sprite
                                                   ; pointer bytes too
 ```
+
+### The KERNAL's blinking cursor, and `DISABLE_CURSOR`
+
+Any program that `SYS`'s into machine code from BASIC and takes over
+the screen — sprites, bitmap graphics, or even just its own text —
+should call `DISABLE_CURSOR` once, early in setup. The KERNAL's
+background IRQ handler keeps running after a `SYS` (real hardware
+behavior, not specific to this project — see `input.inc`'s own header
+comment for the same fact applied to keyboard scanning), and it
+includes blinking the text cursor at wherever it was left, forever,
+since nothing else here ever touches the KERNAL's own cursor-position
+variables.
+
+Typing `LOAD`+`RUN` by hand at a real prompt usually leaves the cursor
+somewhere unobtrusive after all that scrolling, which is exactly why
+this went unnoticed for as long as it did — `pong.asm` had this bug
+from the start, invisible in every normal test, until `c64emu`'s
+`--prg` shortcut (which jumps straight into a program from the very
+first `READY.`, with no typing at all — see `emu/ROADMAP.md`'s
+"Running `asm/`'s example programs") left the cursor sitting in the
+middle of the play field instead: a small white block, blinking at the
+KERNAL's normal cursor rate, that traced back to screen code `$A0` (the
+real cursor character) never being suppressed. `mini6502.py`'s own
+tests never had a chance to catch this either — it has no real IRQ or
+cursor emulation at all.
+
+The fix is one line, called before anything else could still be
+showing a character left over from before the program started:
+
+```
+start:
+        DISABLE_CURSOR
+        ; ... rest of setup
+```
+
+`DISABLE_CURSOR` writes the KERNAL's standard, widely-documented cursor
+enable flag (`$CC`: 0 = blinking, nonzero = disabled). It doesn't clear
+a cursor character already on screen — only stops the IRQ from drawing
+another one — so call it before your own screen-clear, not after.
 
 ### A `sprite0_bounce_step` bug this library used to have (now fixed, no action needed)
 

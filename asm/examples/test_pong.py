@@ -68,6 +68,24 @@ time execution reaches wait_frame, advancing one simulated "frame" per
 main_loop iteration instead of burning millions of real instructions
 on the busy-wait itself.
 
+A fourth fix, caught a different way entirely: pong.asm never disabled
+the KERNAL's background IRQ, which keeps blinking the text cursor at
+wherever it was left even after a program SYS's out of BASIC (real
+hardware behavior - see lib/input.inc's own header comment for the same
+fact applied to keyboard scanning). Invisible via a normal typed
+LOAD+RUN, where the extra scrolling leaves the cursor somewhere
+unobtrusive - but c64emu's --prg shortcut (emu/gtk/main.c, which jumps
+straight into a program from the very first READY. with no typing at
+all) left it sitting in the middle of the play field instead: a small
+white block, blinking at the KERNAL's normal rate, that traced back to
+screen code $A0 (the actual cursor character) never being suppressed.
+mini6502.py has no real IRQ or cursor emulation at all, so none of this
+test's own checks could ever have caught it - this needed a real VIC-II
+and a running KERNAL to surface. Fixed with a new DISABLE_CURSOR macro
+in lib/graphics.inc (see lib-reference.md's own section on it), called
+once at the very start of pong.asm's setup; not exercised by this test
+suite for the same reason it couldn't catch the bug in the first place.
+
 Run from this directory with mini6502.py on the path, e.g.:
     PYTHONPATH=/path/to/mini6502 python3 test_pong.py
 """

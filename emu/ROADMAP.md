@@ -397,6 +397,33 @@ redoing against this emulator's own input-injection API
 (`machine_set_key()`/`machine_set_joystick()`) to get the same
 coverage; this was a one-off manual verification pass instead.
 
+**Real bug this immediately caught in `pong.asm`, not in the emulator**:
+a real screenshot (screen-recording access turned out to be available
+after all) showed the ball sharing the screen with a second, perfectly
+stationary white block. Traced to screen code `$A0` - the actual
+KERNAL cursor character - sitting in screen RAM at whatever cell the
+cursor was left at. `pong.asm` never disables or takes over the
+KERNAL's background IRQ (`asm/lib/input.inc`'s own header comment
+already documents that IRQ keeps running after a raw SYS jump, real
+hardware behavior), so it keeps blinking the cursor forever at wherever
+it was left, since nothing else ever touches the KERNAL's own
+cursor-position variables. Invisible via a normal typed LOAD+RUN (the
+extra scrolling from typing usually leaves the cursor somewhere
+unobtrusive) but landed squarely in the middle of the play field via
+`--prg`'s shortcut, which jumps in from the very first READY. with zero
+typed input. Two independent fixes, both landed: `try_inject_prg()`
+now writes the KERNAL's standard cursor-enable flag (`$CC`, nonzero =
+disabled) before jumping into any injected program, so the shortcut
+itself never triggers this for any demo; and a new `DISABLE_CURSOR`
+macro in `asm/lib/graphics.inc` (called from `pong.asm`'s own startup)
+is the real, demo-side fix, matching what any well-behaved C64 program
+does before taking over the screen - the emulator-side fix is a safety
+net for demos that don't have it, not a substitute for demos doing it
+properly themselves. Verified with a live screenshot post-fix (clean)
+and confirmed the pixel-level VIC-II/SID logic was never at fault first
+(hand-traced `sid_output()` and the ball's own sprite registers through
+hundreds of frames, both rock-steady) before chasing the real cause.
+
 ## Not yet scheduled
 
 - **Light pen** - a peripheral vanishingly few pieces of C64 software

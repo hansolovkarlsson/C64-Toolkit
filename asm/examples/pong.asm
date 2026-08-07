@@ -148,6 +148,15 @@ AI_SPEED = 2      ; computer paddle moves once every this-many frames
         .include "lib/sound.inc"
 
 start:
+        DISABLE_CURSOR       ; the KERNAL's background IRQ keeps blinking
+                                ; the text cursor at wherever BASIC left it
+                                ; otherwise -- invisible when this program is
+                                ; run the normal LOAD+RUN way (the cursor
+                                ; ends up somewhere off the play field), but
+                                ; a real bug: caught via c64emu's --prg
+                                ; shortcut leaving it sitting in the middle
+                                ; of the screen -- see DISABLE_CURSOR's own
+                                ; header comment in graphics.inc
         CIA_KEYBOARD_SETUP   ; sets CIA1 port B to all-input, for reading
                                 ; keyboard row data; port A's direction is
                                 ; managed per-call by read_joy2/READ_KEY

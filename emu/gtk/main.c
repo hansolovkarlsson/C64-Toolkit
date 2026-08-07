@@ -249,7 +249,24 @@ static int screen_has_ready(Machine *m) {
  * up, the same class of bug as skipping the boot sequence entirely.
  * Loads the file, finds its BASIC stub's SYS target the shortcut way
  * (see machine_find_sys_target()'s own comment - no simulated typing of
- * RUN, no real BASIC tokenizing), and jumps the CPU straight there. */
+ * RUN, no real BASIC tokenizing), and jumps the CPU straight there.
+ *
+ * Also disables the KERNAL's blinking text cursor ($CC, the standard
+ * documented cursor-enable flag - nonzero suppresses it) right before
+ * jumping in. This isn't cosmetic guesswork: the KERNAL's IRQ handler
+ * is STILL running in the background after a raw SYS jump on real
+ * hardware (see input.inc's own header comment), and it keeps
+ * blinking the cursor at wherever it was left, forever,
+ * unless the program either disables it or a well-behaved demo takes
+ * over the IRQ itself. Typing LOAD+RUN normally leaves the cursor
+ * somewhere unobtrusive after all that scrolling; jumping straight in
+ * from the very first READY. (this shortcut) can leave it sitting
+ * in the middle of a game's own play field instead - confirmed via a
+ * real screenshot showing pong.asm's ball sharing the screen with a
+ * second, perfectly stationary white block that traced back to screen
+ * code $A0 (the real KERNAL cursor character) at the exact cell the
+ * cursor was left at. Demos that already take over the IRQ themselves
+ * are unaffected either way. */
 static void try_inject_prg(App *app) {
     if (app->prg_state != PRG_PENDING) return;
     if (!screen_has_ready(&app->machine)) return;
@@ -260,6 +277,7 @@ static void try_inject_prg(App *app) {
         fprintf(stderr, "--prg %s: couldn't find a BASIC-stub SYS target to jump to (not a .basic-style c64asm .prg?)\n", app->prg_path);
     } else {
         fprintf(stderr, "--prg %s: loaded at $%04X, jumping to $%04X\n", app->prg_path, load_addr, sys_target);
+        memory_write(&app->machine.mem, 0xCC, 1);
         app->machine.cpu.pc = sys_target;
     }
     app->prg_state = PRG_DONE; /* either way - don't keep retrying every frame */
