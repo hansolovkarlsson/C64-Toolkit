@@ -622,12 +622,12 @@ emulation are explicitly out of scope for now.
   `SDL_LockAudioDevice()`/`SDL_UnlockAudioDevice()` (SDL's own
   documented mechanism for exactly this split — locking pauses callback
   invocation, so the main thread can safely touch shared state and the
-  callback needs no locking of its own). `tick()` decides how many of
-  SID's real clock cycles are owed per 44.1kHz sample
-  (`SID_CLOCK_HZ`, reusing this file's existing ~50Hz-timer
-  approximation of the real PAL clock rather than introducing a second,
-  separate one), accumulating fractionally since that ratio isn't a
-  whole number, and pushes finished samples into the ring; the callback
+  callback needs no locking of its own). `tick()` decides how many
+  44.1kHz samples are owed against ACTUAL elapsed real time since the
+  previous call (`g_get_monotonic_time()`, not an assumed cycle-derived
+  rate — see this bullet's second real bug below for why), accumulating
+  fractionally since that ratio isn't a whole number, and pushes
+  finished samples into the ring; the callback
   only ever reads it, zero-filling on underrun rather than repeating
   stale samples. `sid_output()`'s raw output is deliberately DC-biased,
   not centered on 0 (see `sid.h`) — fed straight through as-is, NOT
@@ -652,6 +652,34 @@ emulation are explicitly out of scope for now.
   to unit-test "did a real ring buffer correctly hand off to a real
   audio thread" without an actual running audio backend — exactly why
   this bug slipped through until someone actually listened to it.
+  **A second real bug, caught while testing `asm/examples/` against the
+  emulator**: short sound effects (a bounce/paddle-hit blip) sounded
+  fine, but `pong.asm`'s much longer "miss" sound effect (several
+  seconds of ADSR decay, vs. the blips' fraction of a second) came out
+  "broken up." Temporarily instrumenting the ring buffer directly
+  showed dozens of real underrun events every single second,
+  continuously, for the whole session — not specific to the miss sound
+  at all, just something only a sound long enough to last through
+  several of those gaps could reveal; the short blips never lasted long
+  enough for a human ear to register the underlying stutter. Root
+  cause: `tick()`'s audio pacing generated exactly one frame's worth of
+  samples per `g_timeout_add()` call, assuming each call corresponded
+  to exactly `FRAME_MS` (20ms) of real time — `g_timeout_add()` never
+  actually guarantees that, and the real average interval running even
+  slightly longer (ordinary GTK/OS scheduling overhead, nothing exotic)
+  was a continuous ~5% sample production deficit against SDL's own
+  hardware-clocked 44.1kHz consumption — a systematic rate mismatch, not
+  occasional jitter a bigger ring buffer could have absorbed (a
+  systematic deficit drains any fixed-size buffer eventually). Fixed by
+  pacing sample generation against actual elapsed wall-clock time
+  instead, completely decoupled from `FRAME_MS`/`CYCLES_PER_FRAME` and
+  from whatever `machine_step()` itself consumed that call —
+  `sid_tick()` stays perfectly cycle-accurate regardless (it only ever
+  depends on cycles actually consumed, never real time), only the
+  sample-pulling cadence changed. Reverified with the same temporary
+  instrumentation: underrun events dropped to zero and stayed there for
+  the rest of a 20-second live run, after a brief expected fill-up
+  period at startup.
 - **End-to-end boot test** (`tests/boot/`): the odd one out among
   `emu/`'s test suites — every other one (`tests/cpu/`, `tests/memory/`,
   `tests/cia/`, `tests/machine/`, `tests/vic/`) checks a single module

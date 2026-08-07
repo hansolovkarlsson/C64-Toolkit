@@ -318,11 +318,12 @@ each piece will live.
      its OWN dedicated real-time thread, so the two are bridged through
      a small ring buffer rather than letting the callback touch `Sid`
      directly, which would be a genuine data race, not just a style
-     concern. `tick()` decides how many of SID's real clock cycles
-     (`SID_CLOCK_HZ`, reusing this file's own existing ~50Hz-timer
-     approximation of the real PAL clock rather than a second, separate
-     one) are owed per 44.1kHz sample, accumulating fractionally since
-     that ratio isn't a whole number, and pushes finished samples into
+     concern. `tick()` decides how many 44.1kHz samples are owed against
+     ACTUAL elapsed real time since the previous call (`g_get_monotonic_
+     time()`, NOT an assumed cycle-derived rate - see this section's own
+     "second real bug" entry below for why that distinction matters),
+     accumulating fractionally since that ratio isn't a whole number,
+     and pushes finished samples into
      the ring under `SDL_LockAudioDevice()`/`SDL_UnlockAudioDevice()` -
      SDL's own documented mechanism for exactly this producer/consumer
      split (locking pauses callback invocation, letting the main thread
@@ -423,6 +424,36 @@ properly themselves. Verified with a live screenshot post-fix (clean)
 and confirmed the pixel-level VIC-II/SID logic was never at fault first
 (hand-traced `sid_output()` and the ball's own sprite registers through
 hundreds of frames, both rock-steady) before chasing the real cause.
+
+**A second real bug this immediately caught, this time genuinely in the
+emulator's own audio pipeline**: the bounce/paddle-hit sound effects
+were fine, but the "miss" sound effect (a much longer, several-second
+ADSR decay than the sharp blips - see `pong.asm`'s own `PLAY_SOUND`
+callers) came out "broken up." Instrumenting the ring buffer directly
+(temporarily, not committed) showed dozens of real underrun gaps every
+single second, continuously, for the entire session - not something
+specific to the miss sound at all, just something only a sound long
+enough to actually last through several of those gaps could reveal;
+the short blips never lasted long enough for a human ear to register
+the underlying stutter. Root cause: `tick()`'s audio pacing generated
+exactly one frame's worth of samples per `g_timeout_add()` call,
+assuming each call corresponded to exactly `FRAME_MS` (20ms) of real
+time - `g_timeout_add()` never actually guarantees that, and the real
+average interval running even slightly longer than 20ms (ordinary GTK/
+OS scheduling overhead, nothing exotic) was a continuous ~5% sample
+production deficit against SDL's own hardware-clocked 44.1kHz
+consumption - not occasional jitter a bigger ring buffer could have
+absorbed, a systematic rate mismatch that drains any fixed-size buffer
+eventually. Fixed by pacing sample generation against ACTUAL elapsed
+wall-clock time between `tick()` calls (`g_get_monotonic_time()`)
+instead of assumed cycle-derived timing, completely decoupled from
+`FRAME_MS`/`CYCLES_PER_FRAME` and from whatever `machine_step()` itself
+consumed that call - `sid_tick()` still stays perfectly cycle-accurate
+regardless (it only ever depends on cycles actually consumed, never on
+real time), only the SAMPLE-PULLING cadence changed. Reverified with
+the same temporary ring-buffer instrumentation: underrun events dropped
+to zero and stayed there for the rest of a 20-second live run, after a
+brief expected fill-up period at startup.
 
 ## Not yet scheduled
 

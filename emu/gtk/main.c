@@ -53,14 +53,30 @@
 /* Audio output (../ROADMAP.md step 7's last piece): SID itself (see
  * sid.h) has no notion of a sample rate - sid_tick() already advances
  * in lockstep with the CPU inside machine_step(), same as CIA/VIC, so
- * this file is where "how many real SID clock cycles is one 44.1kHz
- * sample worth" gets decided, the same way it's already where "how
- * many CPU cycles is one video frame worth" (CYCLES_PER_FRAME above)
- * gets decided. SID_CLOCK_HZ reuses this file's own 20ms/50Hz frame
- * timer approximation rather than introducing a second, different
- * approximation of the real PAL clock. */
+ * this file is where "how many samples is one real-world second worth"
+ * gets decided. Paced against ACTUAL elapsed wall-clock time between
+ * tick() calls (g_get_monotonic_time(), see tick()), NOT against
+ * CYCLES_PER_FRAME/FRAME_MS - an earlier version assumed every tick()
+ * call corresponded to exactly 20ms of real time, which g_timeout_add()
+ * never actually guarantees; the real average interval running slightly
+ * longer than that (entirely ordinary GTK/OS scheduling jitter, nothing
+ * exotic) was a genuine, continuous ~5% audio sample deficit against
+ * SDL's own hardware-clocked 44.1kHz consumption, not just occasional
+ * jitter - confirmed by instrumenting the ring buffer directly: dozens
+ * of real underrun gaps every single second, the entire time, not just
+ * around any particular sound effect. Short sound effects (a bounce/hit
+ * blip) never last long enough for a human ear to notice the resulting
+ * micro-gaps; pong.asm's several-seconds-long "miss" tone (a much
+ * slower ADSR decay than the blips - see PLAY_SOUND's callers) gave
+ * them plenty of time to become audible as "broken up" sound. Basing
+ * pacing on real elapsed time instead - completely decoupled from
+ * whatever cycle count machine_step() happened to consume, or how long
+ * GTK took to actually schedule this call - fixes the systematic
+ * deficit at its source rather than just growing the ring buffer to
+ * paper over it (that alone wouldn't have helped: a systematic rate
+ * deficit still drains any fixed-size buffer eventually, it only delays
+ * the first underrun). */
 #define SID_SAMPLE_RATE 44100
-#define SID_CLOCK_HZ (CYCLES_PER_FRAME * 1000 / FRAME_MS) /* == 982800, this file's existing ~50Hz-timer approximation of the real ~985248Hz PAL clock */
 #define AUDIO_RING_SAMPLES 8192 /* ~185ms at 44.1kHz - generous slack against GTK timer jitter, see tick()'s own comment */
 
 typedef struct {
@@ -86,7 +102,8 @@ typedef struct {
      * main()) - the emulator still runs, just silently, the same
      * graceful-degradation spirit as running with 0/3 ROMs loaded. */
     SDL_AudioDeviceID audio_dev;
-    double sample_cycle_accum; /* fractional SID clock cycles owed toward the next sample - see tick() */
+    double sample_time_accum_us; /* fractional real microseconds owed toward the next sample - see tick() */
+    gint64 last_audio_time_us;   /* g_get_monotonic_time() as of the last tick() call, 0 until the first - see tick() */
     int16_t audio_ring[AUDIO_RING_SAMPLES];
     int audio_ring_read, audio_ring_write, audio_ring_count;
 
@@ -287,44 +304,59 @@ static gboolean tick(gpointer user_data) {
     App *app = user_data;
     try_inject_prg(app);
     int budget = CYCLES_PER_FRAME;
-    while (budget > 0) {
-        int cycles = machine_step(&app->machine);
-        budget -= cycles;
+    while (budget > 0) budget -= machine_step(&app->machine);
+    /* SID ticked exactly once per machine_step() call above already
+     * (see machine.c) - cycle-accurate regardless of anything below,
+     * since sid_tick() only ever depends on cycles actually consumed,
+     * never on real time. */
 
-        /* SID ticked exactly once already, inside machine_step() above
-         * (see machine.c) - this just decides when enough of ITS clock
-         * cycles have gone by to owe the audio thread another sample,
-         * accumulating fractionally since SID_CLOCK_HZ/SID_SAMPLE_RATE
-         * (~22.29) isn't a whole number. Skipped entirely if SDL audio
-         * never opened (audio_dev == 0) - see main(). */
-        if (app->audio_dev != 0) {
-            app->sample_cycle_accum += cycles;
-            if (app->sample_cycle_accum >= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE) {
-                SDL_LockAudioDevice(app->audio_dev);
-                while (app->sample_cycle_accum >= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE) {
-                    /* sid_output()'s raw value is used AS-IS, not
-                     * artificially recentered around 0 - it's already
-                     * DC-biased on real hardware (silence is always
-                     * exactly 0, not some midpoint - see sid.h's own
-                     * header comment), and critically, this way
-                     * "silence" here exactly matches audio_callback()'s
-                     * own underrun-fill value (also a literal 0). An
-                     * earlier version of this line shifted samples down
-                     * by 16384 to look more like "normal" bipolar PCM,
-                     * which meant every ring-buffer underrun (routine,
-                     * since GTK's timer and SDL's independent real-time
-                     * audio thread never stay perfectly in lockstep)
-                     * jumped between that shifted "silence" and the
-                     * callback's unshifted 0 - an audible, repeating
-                     * click even with nothing actually playing. */
-                    int16_t sample = sid_output(&app->machine.sid);
-                    audio_push_sample(app, sample);
-                    app->sample_cycle_accum -= (double)SID_CLOCK_HZ / SID_SAMPLE_RATE;
-                }
-                SDL_UnlockAudioDevice(app->audio_dev);
+    /* Paced against ACTUAL elapsed wall-clock time, not against how
+     * many cycles the loop above happened to consume - see this file's
+     * own SID_SAMPLE_RATE comment for why that distinction is the
+     * whole fix for a real, continuous audio underrun bug. Skipped
+     * entirely if SDL audio never opened (audio_dev == 0) - see
+     * main(). */
+    if (app->audio_dev != 0) {
+        gint64 now = g_get_monotonic_time();
+        if (app->last_audio_time_us == 0) app->last_audio_time_us = now; /* first call - nothing owed yet */
+        gint64 elapsed_us = now - app->last_audio_time_us;
+        app->last_audio_time_us = now;
+        /* Cap a pathological stall (window drag, OS scheduling hiccup,
+         * a debugger breakpoint) to 100ms worth - without this, a long
+         * real gap would try to generate thousands of samples in one
+         * burst here, which is both pointless (they'd all reflect
+         * whatever Sid's state happens to be RIGHT NOW, not what it
+         * was throughout the gap) and briefly hogs the main thread. */
+        if (elapsed_us > 100000) elapsed_us = 100000;
+
+        const double us_per_sample = 1000000.0 / SID_SAMPLE_RATE;
+        app->sample_time_accum_us += (double)elapsed_us;
+        if (app->sample_time_accum_us >= us_per_sample) {
+            SDL_LockAudioDevice(app->audio_dev);
+            while (app->sample_time_accum_us >= us_per_sample) {
+                /* sid_output()'s raw value is used AS-IS, not
+                 * artificially recentered around 0 - it's already
+                 * DC-biased on real hardware (silence is always
+                 * exactly 0, not some midpoint - see sid.h's own
+                 * header comment), and critically, this way
+                 * "silence" here exactly matches audio_callback()'s
+                 * own underrun-fill value (also a literal 0). An
+                 * earlier version of this line shifted samples down
+                 * by 16384 to look more like "normal" bipolar PCM,
+                 * which meant every ring-buffer underrun (routine,
+                 * since GTK's timer and SDL's independent real-time
+                 * audio thread never stay perfectly in lockstep)
+                 * jumped between that shifted "silence" and the
+                 * callback's unshifted 0 - an audible, repeating
+                 * click even with nothing actually playing. */
+                int16_t sample = sid_output(&app->machine.sid);
+                audio_push_sample(app, sample);
+                app->sample_time_accum_us -= us_per_sample;
             }
+            SDL_UnlockAudioDevice(app->audio_dev);
         }
     }
+
     gtk_widget_queue_draw(app->drawing_area);
     return G_SOURCE_CONTINUE;
 }
