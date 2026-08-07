@@ -15,7 +15,23 @@
  * translated to C64 keyboard-matrix positions (see c64_keymap below)
  * and fed into CIA1 via machine_set_key(), so typing in this window
  * reaches BASIC/KERNAL once real ROM images are present (see
- * ../roms/README.md). Joystick input isn't wired up yet.
+ * ../roms/README.md).
+ *
+ * Joystick: SDL2's SDL_GameController API (already a dependency for
+ * audio - no new library needed) drives port 2, the port every
+ * existing asm/examples/ demo with joystick support reads (see
+ * pong.asm's own header comment). GTK4 itself has no gamepad API, and
+ * SDL_GameController already ships wide, maintained mappings for
+ * common pads (Xbox/PlayStation/etc.) across platforms, so there's no
+ * reason to hand-roll HID parsing. Polled once per tick() (see
+ * poll_joystick()) rather than driven by its own event callback -
+ * SDL's controller/joystick device-added/removed events still need
+ * pumping somewhere, and tick() already runs once per frame on the
+ * one thread that's allowed to touch Machine. Only one controller is
+ * supported at a time (the first one found); a second connecting
+ * later without the first disconnecting is just ignored, not a
+ * crash - not worth more than that for a single-joystick-port
+ * default like port 2.
  *
  * Audio: SDL2 (SDL_OpenAudioDevice + a callback, see main()/
  * audio_callback()) plays back real SID output - see the
@@ -55,6 +71,14 @@
  * draw_screen() scales the render to fill whatever size it currently
  * is, so this only picks the STARTING zoom level, not a cap. */
 #define WINDOW_ZOOM_DEFAULT 2
+
+/* SDL_GameController axis values run -32768..32767; a small deadzone
+ * around 0 avoids stick drift/noise registering as a held direction.
+ * Chosen generously (about half of full deflection) since C64
+ * joysticks are digital switches, not analog - there's no reason to
+ * treat a light stick tilt as a "soft" press when the machine only
+ * understands on/off anyway. */
+#define JOYSTICK_AXIS_THRESHOLD 16000
 
 /* Audio output (../ROADMAP.md step 7's last piece): SID itself (see
  * sid.h) has no notion of a sample rate - sid_tick() already advances
@@ -151,6 +175,12 @@ typedef struct {
     double sample_cycle_accum; /* fractional SID clock cycles owed toward the next sample - see tick() */
     int16_t audio_ring[AUDIO_RING_SAMPLES];
     int audio_ring_read, audio_ring_write, audio_ring_count;
+
+    /* NULL if no controller is connected - see poll_joystick(). Only
+     * ever opened/closed/read from the GTK main thread, same as
+     * everything else touching Machine, so no locking needed here
+     * (unlike the audio ring buffer). */
+    SDL_GameController *controller;
 
     /* Optional --prg PATH (see main()): a .prg to auto-inject and jump
      * straight into once boot reaches READY. - see tick()'s own
@@ -400,9 +430,62 @@ static void try_inject_prg(App *app) {
     app->prg_state = PRG_DONE; /* either way - don't keep retrying every frame */
 }
 
+/* Pumps SDL's event queue (the only place SDL_CONTROLLERDEVICEADDED/
+ * REMOVED show up - SDL doesn't offer a polling-only hotplug check)
+ * and updates joystick port 2 from whatever controller is currently
+ * open. Called once per tick() (see below), the same cadence
+ * machine_set_key() effectively runs at via GTK's own key events -
+ * a controller's directions/fire button only need to be as fresh as
+ * one frame, same as everything else driving Machine.
+ *
+ * D-pad buttons and the left stick both map to the same four
+ * directions (whichever the controller/game favors - some Xbox-style
+ * pads report the D-pad as a hat, others as buttons via
+ * SDL_GameController's abstraction, so checking both costs nothing
+ * and covers either), OR'd together. Button A is fire - the
+ * conventional single-fire-button mapping every C64 joystick game
+ * expects (see read_joystick's own comment in asm/examples/pong.asm).
+ * machine_set_joystick() takes active-low bits (0 = held) - built
+ * here as an active-high "pressed" mask first since that reads more
+ * naturally, then inverted once at the end. */
+static void poll_joystick(App *app) {
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        if (e.type == SDL_CONTROLLERDEVICEADDED && !app->controller) {
+            app->controller = SDL_GameControllerOpen(e.cdevice.which);
+        } else if (e.type == SDL_CONTROLLERDEVICEREMOVED && app->controller) {
+            SDL_JoystickID id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(app->controller));
+            if (e.cdevice.which == id) {
+                SDL_GameControllerClose(app->controller);
+                app->controller = NULL;
+                machine_set_joystick(&app->machine, 2, 0xFF); /* back to all-released, not whatever it last read */
+            }
+        }
+    }
+
+    if (!app->controller) return;
+
+    int16_t lx = SDL_GameControllerGetAxis(app->controller, SDL_CONTROLLER_AXIS_LEFTX);
+    int16_t ly = SDL_GameControllerGetAxis(app->controller, SDL_CONTROLLER_AXIS_LEFTY);
+    int up = SDL_GameControllerGetButton(app->controller, SDL_CONTROLLER_BUTTON_DPAD_UP) || ly < -JOYSTICK_AXIS_THRESHOLD;
+    int down = SDL_GameControllerGetButton(app->controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ly > JOYSTICK_AXIS_THRESHOLD;
+    int left = SDL_GameControllerGetButton(app->controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT) || lx < -JOYSTICK_AXIS_THRESHOLD;
+    int right = SDL_GameControllerGetButton(app->controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || lx > JOYSTICK_AXIS_THRESHOLD;
+    int fire = SDL_GameControllerGetButton(app->controller, SDL_CONTROLLER_BUTTON_A);
+
+    uint8_t pressed = 0;
+    if (up) pressed |= 0x01;
+    if (down) pressed |= 0x02;
+    if (left) pressed |= 0x04;
+    if (right) pressed |= 0x08;
+    if (fire) pressed |= 0x10;
+    machine_set_joystick(&app->machine, 2, (uint8_t)~pressed);
+}
+
 static gboolean tick(gpointer user_data) {
     App *app = user_data;
     try_inject_prg(app);
+    poll_joystick(app);
 
     int budget = CYCLES_PER_FRAME;
     while (budget > 0) {
@@ -571,9 +654,17 @@ int main(int argc, char **argv) {
 
     /* Audio failing to open is never fatal - same graceful-degradation
      * spirit as running with 0/3 ROMs loaded (app.audio_dev stays 0,
-     * which tick() checks before ever touching SDL). */
-    if (SDL_Init(SDL_INIT_AUDIO) < 0) {
-        fprintf(stderr, "SDL_Init(SDL_INIT_AUDIO) failed: %s - running without audio\n", SDL_GetError());
+     * which tick() checks before ever touching SDL). Same for
+     * SDL_INIT_GAMECONTROLLER: if it fails, app.controller just stays
+     * NULL forever and poll_joystick() is a no-op every frame - the
+     * emulator runs fine with keyboard input only, same as it always
+     * could. A controller already plugged in when this runs is picked
+     * up automatically: SDL queues an SDL_CONTROLLERDEVICEADDED event
+     * for every already-connected controller the first time the event
+     * queue is pumped, which poll_joystick() does every tick() - no
+     * separate enumerate-at-startup step needed. */
+    if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
+        fprintf(stderr, "SDL_Init failed: %s - running without audio/joystick\n", SDL_GetError());
     } else {
         SDL_AudioSpec want;
         SDL_zero(want);
@@ -601,6 +692,7 @@ int main(int argc, char **argv) {
     g_object_unref(gtk_app);
 
     if (app.audio_dev != 0) SDL_CloseAudioDevice(app.audio_dev);
+    if (app.controller != NULL) SDL_GameControllerClose(app.controller);
     SDL_Quit();
     return status;
 }

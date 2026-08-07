@@ -510,6 +510,41 @@ header comment), so holding "last sample" during genuine silence still
 just holds 0, identical to before. Confirmed fixed by ear against
 `bounce.asm` after the change.
 
+## Joystick input
+
+~~Done~~: `gtk/main.c`'s `poll_joystick()` drives `machine_set_joystick()`'s
+port 2 (the port every joystick-aware `asm/examples/` demo reads - see
+`pong.asm`'s own header comment) from any SDL_GameController-recognized
+pad, Xbox controllers included via SDL2's built-in mappings - no new
+library dependency, SDL2 was already required for audio. Runs off the
+same `SDL_Init` call audio uses (`SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER`)
+and the same never-fatal-if-missing philosophy: no controller connected
+just means `poll_joystick()` is a no-op every frame and the emulator
+runs on keyboard input alone, same as audio failing to open. Polled once
+per `tick()` rather than driven by its own callback - SDL's controller
+hotplug events (`SDL_CONTROLLERDEVICEADDED`/`REMOVED`, the only
+mechanism SDL offers for detecting a connect/disconnect - there's no
+polling-only check) still need the event queue pumped somewhere, and
+`tick()` already runs once per frame on the one thread allowed to touch
+`Machine`. Direction comes from D-pad buttons OR the left stick past a
+deadzone (`JOYSTICK_AXIS_THRESHOLD`, about half of full deflection -
+C64 joysticks are digital switches, so there's no reason to treat a
+light tilt as a "soft" press), OR'd together since different pads
+report their D-pad as a hat vs. buttons; fire is button A, the
+conventional single-fire-button mapping every C64 joystick game
+expects. Only the first controller found is tracked; a second
+connecting later is ignored rather than causing a crash. Disconnecting
+resets joystick 2 to all-released rather than leaving it stuck reading
+whatever direction was held at the moment of disconnect. Verified: full
+regression suite (all 7 gates, boot cycle count unchanged at 180030)
+plus a live run against `pong.prg` confirming the emulator starts,
+loads ROMs, and runs normally with `SDL_INIT_GAMECONTROLLER` active and
+no physical controller attached (no controller was available to verify
+actual button/stick input end-to-end in this environment - the
+enable/poll/hotplug path is symmetric with the audio init path already
+proven in production, but real hardware testing is still worth doing
+before relying on this for anything beyond casual use).
+
 ## Not yet scheduled
 
 - **Light pen** - a peripheral vanishingly few pieces of C64 software

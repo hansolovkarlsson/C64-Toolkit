@@ -615,13 +615,31 @@ emulation are explicitly out of scope for now.
   images are present, echoed to the real screen the same as on real
   hardware — no separate debug logging needed anymore now that VIC-II
   actually renders the result.
-  Joystick input isn't wired into the GTK shell yet even though
-  `machine_set_joystick()` exists. Built with `-std=c11`, not this
+  **Joystick**: any SDL_GameController-recognized pad (Xbox
+  controllers work via SDL2's built-in mappings, no extra config)
+  drives `machine_set_joystick()`'s port 2 — the port every
+  joystick-aware `asm/examples/` demo reads (see `pong.asm`'s own
+  header comment). `poll_joystick()` in `gtk/main.c` runs once per
+  `tick()`, pumping SDL's event queue for `SDL_CONTROLLERDEVICEADDED`/
+  `REMOVED` (SDL's only mechanism for hotplug detection — there's no
+  polling-only check) and reading whichever controller is currently
+  open: D-pad buttons OR the left stick past a deadzone
+  (`JOYSTICK_AXIS_THRESHOLD`) for direction — since either a hat-style
+  D-pad or an analog stick can be what a given pad reports — and
+  button A for fire, the conventional single-fire-button mapping every
+  C64 joystick game expects. Only one controller is tracked at a time
+  (the first one found); a second connecting later is ignored, not a
+  crash. A disconnect resets joystick 2 to all-released rather than
+  leaving it stuck in its last-read state. No controller connected is
+  never fatal — `poll_joystick()` is a no-op and the emulator runs on
+  keyboard input alone, same graceful-degradation spirit as audio
+  failing to open. Built with `-std=c11`, not this
   toolkit's usual `-std=c99` — GTK4's own headers rely on C11
   typedef-redefinition tolerance (`G_DECLARE_*_TYPE` macros);
   `src/*.c` itself stays plain C99-compatible regardless of which
   standard compiles it. **Audio**: real SID output, played back through
-  SDL2 (`SDL_Init(SDL_INIT_AUDIO)` + `SDL_OpenAudioDevice()` + a
+  SDL2 (`SDL_Init(SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER)` +
+  `SDL_OpenAudioDevice()` + a
   callback — a new dependency alongside GTK4's own, `brew install
   gtk4 sdl2`). `sid_tick()`/`sid_output()` are only ever called from
   the GTK main thread, inside `tick()` — SDL's audio callback runs on

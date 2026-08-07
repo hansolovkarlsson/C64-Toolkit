@@ -42,9 +42,10 @@ together, not just each module in isolation (SID isn't part of this
 gate - nothing in BASIC's own boot path touches SID registers). See
 `tests/cpu/README.md`, `tests/memory/README.md`, `tests/cia/README.md`,
 `tests/machine/README.md`, `tests/vic/README.md`, `tests/sid/README.md`,
-`tests/boot/README.md`, and this file's "Building" section below. No
-joystick wiring in the GTK shell yet even though
-`machine_set_joystick()` exists. See
+`tests/boot/README.md`, and this file's "Building" section below.
+Joystick input works too - any SDL_GameController-recognized pad
+(Xbox controllers included) drives port 2, the port every
+joystick-aware demo in `../asm/examples/` reads. See
 [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## Why this exists, and how it relates to `asm/`'s `mini6502.py`
@@ -117,7 +118,12 @@ C64's aspect ratio, so dragging the window to a new size is how you
 zoom in/out. It also plays real SID audio
 through SDL2 (`SDL_OpenAudioDevice` + a callback, see `gtk/main.c`) -
 if SDL audio fails to open for any reason, that's never fatal, the
-emulator just runs silently, the same as running with 0/3 ROMs. It
+emulator just runs silently, the same as running with 0/3 ROMs. A
+connected gamepad (Xbox controllers work out of the box via SDL2's
+built-in mappings) drives joystick port 2 - D-pad or left stick for
+direction, the A button to fire - hot-pluggable, and with no
+controller connected the emulator just runs on keyboard input alone,
+same graceful-degradation spirit as the other optional peripherals. It
 runs fine with no ROMs loaded (the CPU just
 executes a harmless BRK loop on zeroed memory, and the screen stays
 whatever color `$D021`/`$D020` default to), which is enough to see the
@@ -146,7 +152,7 @@ unlike Commodore's own ROMs - see `tests/boot/README.md`) and checks
 that the whole machine actually boots to a `READY.` prompt, catching
 integration bugs no single module's tests could.
 
-See [`ROADMAP.md`](ROADMAP.md) for what's next (SID's analog filter, or joystick input in the GTK shell).
+See [`ROADMAP.md`](ROADMAP.md) for what's next (SID's analog filter).
 
 ## ROM images
 
