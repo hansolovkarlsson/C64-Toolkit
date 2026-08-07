@@ -13,6 +13,11 @@ each with a substantial comment explaining what that phase does and
 why - see "Source layout" below if you're reading this to learn how a
 small compiler like this is put together, not just to use it.
 
+See [`docs/cc64-reference.md`](docs/cc64-reference.md) for the
+language reference (syntax, semantics, and the exact boundary of
+what's supported) as one document, separate from this README's own
+narrative walkthrough below.
+
 ## Building
 
 Portable C99, no dependencies. A Makefile builds `cc64` from `src/*.c`:
