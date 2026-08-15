@@ -660,3 +660,17 @@ before relying on this for anything beyond casual use).
   full finding and the verification technique (typed through the real
   keyboard matrix, not a ROM-internal shortcut) - reusable if a future
   program surfaces another suspected gap.
+
+## Verified against real Commodore ROMs too
+
+Not just `open-roms`: confirmed booting successfully against real
+KERNAL/BASIC/character ROMs (supplied by a project maintainer from
+hardware they own), with `CHR$()` working correctly there (unlike
+`open-roms`, above). Real KERNAL takes noticeably longer to boot -
+2,140,580 cycles vs. `open-roms`'s ~200,000 - its own more thorough
+memory-size-detection routine, not a `c64emu` bug (an earlier check
+budgeted only 2,000,000 cycles, calibrated around `open-roms`'s fast
+boot, and wrongly concluded real ROMs couldn't boot at all - it cut
+off about 7% too early, mid-loop, still making genuine progress
+through real KERNAL addresses). See `tests/boot/README.md`'s "Verified
+against real Commodore ROMs too" for the full numbers.

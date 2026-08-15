@@ -93,3 +93,27 @@ it) won't fetch those, copyright, regardless of where they'd be
 stored locally. If you want to compare against real ROM behavior,
 supply your own (legally dumped from hardware you own) into
 `../../roms/` yourself - already gitignored, already documented there.
+
+## Verified against real Commodore ROMs too
+
+Confirmed (2026-08-15, real KERNAL/BASIC/character ROMs supplied by a
+project maintainer from hardware they own - a real C64, not `open-roms`):
+`c64emu` boots them successfully to a real `READY.` prompt, and `CHR$()`
+works correctly against real BASIC 2.0 (unlike `open-roms`, per above).
+
+One real difference worth knowing if you're timing anything: real
+KERNAL takes noticeably longer to boot than `open-roms`'s shortcut -
+**2,140,580 cycles** against the real ROM set tested, over 10x
+`open-roms`'s ~200,000 (roughly 2.2 real seconds at the C64's actual
+~0.985MHz clock, versus a fraction of a second). This is real KERNAL's
+own more thorough memory-size-detection routine, not a `c64emu` bug -
+confirmed by watching it complete, not just assuming: an earlier
+headless check budgeted only 2,000,000 cycles (calibrated around
+`open-roms`'s fast boot) and wrongly concluded `c64emu` couldn't boot
+real ROMs at all, since it cut off about 7% too early, mid-loop, still
+making real forward progress through legitimate KERNAL addresses. Not
+an automated gate (same reasoning as the `CHR$` check above - real ROMs
+can't be vendored or fetched by this repo's own tooling), so if you
+have real ROMs and want to re-verify this yourself, budget at least
+~2.5-3,000,000 cycles rather than reusing `MAX_CYCLES` from
+`test_boot.c` above as-is.

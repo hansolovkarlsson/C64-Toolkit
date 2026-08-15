@@ -40,6 +40,11 @@ newer and was scaffolded directly in this repo (no subtree history).
   "Known limitations" for how this was verified (typed through the real
   keyboard matrix, not a shortcut) and `emu/roms/README.md` for why this
   project can't just switch to Commodore's own real ROMs to sidestep it.
+  Also separately confirmed booting real Commodore ROMs correctly too
+  (a project maintainer's own, from hardware they own — see
+  `emu/tests/boot/README.md`'s "Verified against real Commodore ROMs
+  too"), where `CHR$()` works fine — real KERNAL just takes noticeably
+  longer to boot than `open-roms`'s shortcut (~2.14M cycles vs. ~200K).
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against
