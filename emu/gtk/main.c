@@ -631,7 +631,42 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
     gtk_window_present(GTK_WINDOW(window));
 }
 
+/* Prints usage and exits before touching Machine/SDL/GTK at all - -h/
+ * --help should be a fast, side-effect-free query, not something that
+ * loads ROMs or opens a window first. */
+static void print_usage(const char *prog) {
+    printf("Usage: %s [rom-dir] [--prg PATH] [-h | --help]\n", prog);
+    printf("\n");
+    printf("  rom-dir       Directory containing kernal.rom, basic.rom, and\n");
+    printf("                chargen.rom (default: \"roms\", resolved relative to\n");
+    printf("                the current directory - see roms/README.md for where\n");
+    printf("                to get these). Missing or partial ROMs aren't fatal:\n");
+    printf("                the emulator still starts and runs a harmless BRK loop\n");
+    printf("                on zeroed memory - enough to see the window/event loop\n");
+    printf("                working before real ROM images are available.\n");
+    printf("\n");
+    printf("  --prg PATH    Auto-run a c64asm-built .prg once boot reaches a real\n");
+    printf("                READY. prompt, injected via its BASIC stub's SYS\n");
+    printf("                target (see ../asm/examples/ for demos built this way,\n");
+    printf("                and ../C/examples/ for cc64-compiled programs).\n");
+    printf("\n");
+    printf("  -h, --help    Show this help and exit.\n");
+    printf("\n");
+    printf("Audio (SDL2) and joystick (any SDL_GameController-recognized pad, port\n");
+    printf("2) are detected automatically at startup - there's no flag for either;\n");
+    printf("see README.md for details. Both degrade gracefully if unavailable.\n");
+}
+
 int main(int argc, char **argv) {
+    /* Checked first, before App/Machine exist at all - see
+     * print_usage()'s own comment. */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        }
+    }
+
     App app = {0}; /* zeroes audio_dev/sample_cycle_accum/audio_ring_* too - see tick()'s use of them */
     machine_init(&app.machine);
 
@@ -643,8 +678,9 @@ int main(int argc, char **argv) {
      * none did - fine for proving the display/event loop on its own.
      * Optional --prg PATH: a c64asm-built .prg (e.g. from
      * ../../asm/examples/) to auto-run once boot reaches READY. - see
-     * try_inject_prg(). Simple manual parsing rather than getopt: this
-     * is the only flag there is. */
+     * try_inject_prg(). Simple manual parsing rather than getopt: -h/
+     * --help was already handled above, so anything reaching this loop
+     * is --prg or a rom-dir positional. */
     const char *rom_dir = "roms";
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--prg") == 0 && i + 1 < argc) {

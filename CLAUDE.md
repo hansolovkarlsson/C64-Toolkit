@@ -158,7 +158,7 @@ cd emu
 make                       # -> bin/c64emu (needs GTK4 AND SDL2 dev libs, e.g. `brew install gtk4 sdl2`)
 make clean
 
-./bin/c64emu [rom-dir] [--prg PATH]     # rom-dir defaults to "roms"; runs fine with 0/3 ROMs loaded; --prg auto-runs a c64asm-built .prg once boot reaches READY.
+./bin/c64emu [rom-dir] [--prg PATH]     # rom-dir defaults to "roms"; runs fine with 0/3 ROMs loaded; --prg auto-runs a c64asm-built .prg once boot reaches READY.; --help/-h for the full option reference
 ```
 
 Each core module also has its own standalone correctness gate,

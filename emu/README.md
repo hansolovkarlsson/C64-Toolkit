@@ -96,6 +96,7 @@ make            # -> bin/c64emu (requires GTK4 AND SDL2 dev libraries, e.g. `bre
 make clean
 
 ./bin/c64emu [rom-dir] [--prg PATH]   # rom-dir defaults to "roms" (see "ROM images" below)
+./bin/c64emu --help                   # or -h: full option reference, no ROMs/window needed
 ```
 
 `--prg PATH` auto-runs a c64asm-built `.prg` (e.g. one of the demos
