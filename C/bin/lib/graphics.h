@@ -110,10 +110,27 @@ void sprite_color(int n, int c) {
  * asm/lib/graphics.inc's SPRITE_INIT for the same convention). The
  * pointer bytes themselves live in the LAST 8 bytes of the current
  * video matrix, $07F8-$07FF for the default screen at $0400 - a real
- * hardware convention, not a cc64-specific choice. Sprite data must
- * avoid $1000-$1FFF/$9000-$9FFF within the current VIC bank (the
- * character ROM shadow), the same real hardware quirk
- * asm/lib/graphics.inc's own header comment documents. */
+ * hardware convention, not a cc64-specific choice.
+ *
+ * Two placement constraints on the sprite data itself, both real
+ * hardware facts, not cc64-specific: it must avoid $1000-$1FFF/
+ * $9000-$9FFF within the current VIC bank (the character ROM shadow -
+ * the same quirk asm/lib/graphics.inc's own header comment documents),
+ * and - easy to miss, since `block` is silently truncated to a byte
+ * like any other poke() argument - it must fall within the VIC-II's
+ * CURRENT 16K bank (the default, $0000-$3FFF, unless something has
+ * reconfigured CIA2 PRA), not just anywhere in the CPU's full 64K
+ * address space: a data address at or past $4000 divides out to a
+ * block index over 255, which doesn't fit in one byte and silently
+ * wraps to the wrong block instead of erroring. Caught for real
+ * writing examples/bounce_demo.c: an address comfortably clear of
+ * everything else ($6000) still produced a wrapped, wrong pointer for
+ * exactly this reason. Within bank 0, remember that a real cc64
+ * program's own compiled code/runtime library can easily run well
+ * past the "$0d00 or $0e00" scratch address asm/lib/graphics.inc's
+ * comment suggests for a short hand-assembled program - check where
+ * your own program's code actually ends (its `.lst` output, or the
+ * `.prg` file's size added to $0801) before picking an address. */
 void sprite_pointer(int n, int block) {
     poke(2040 + n, block);
 }

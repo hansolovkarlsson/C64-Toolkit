@@ -800,6 +800,16 @@ effect: sets frequency and envelope, then gates on). Every function
 takes a voice number (0-2) and works on any of the SID's 3 independent
 voices.
 
+`examples/bounce_demo.c` puts both together: one hardware sprite
+bounces around the screen, playing a short SID "bonk" on each wall
+hit - the same shape/bounds/sound `asm/examples/bounce.asm` already
+proved out, written from scratch against `graphics.h`/`sound.h`.
+Worth reading its own header comment before picking a sprite-data
+address in your own program: it documents a real, easy-to-hit bug this
+one caught, where `sprite_pointer()`'s block-index byte silently wraps
+if the data address falls outside the VIC-II's current 16K bank - see
+that function's own comment in `lib/graphics.h` too.
+
 `graphics.h`/`sound.h` are independent of `asm/lib/graphics.inc`/
 `sound.inc`, not wrappers around them - `cc64` has no inline-assembly/
 foreign-function-call mechanism to call into external assembly at all,

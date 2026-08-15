@@ -116,6 +116,23 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   path exercised again since `main()` returns normally). Still wanted:
   an expanded "BASIC-equivalent" convenience library — see
   `C/ROADMAP.md`'s "Standard library" section.
+- **First real program built on that library**: `C/examples/
+  bounce_demo.c` - one hardware sprite bounces around the screen,
+  playing a SID "bonk" on each wall hit (the same shape/bounds/sound
+  `asm/examples/bounce.asm` already proved out). Writing it caught a
+  real, easy-to-hit bug in how `sprite_pointer()` gets used: a sprite
+  data address outside the VIC-II's *current* 16K bank divides down to
+  a block-index byte over 255, which silently wraps instead of
+  erroring, pointing at the wrong 64-byte block - now documented
+  directly on `sprite_pointer()` in `C/bin/lib/graphics.h`. Verified by
+  manually single-stepping the assembled program (pinning `$D012` to
+  unblock its raster-wait loop each simulated frame, the same technique
+  `asm/examples/test_bounce.py` uses) and checking cursor/border/sprite-
+  enable/sprite-pointer setup, thousands of distinct sprite positions
+  advancing correctly within bounds, and the SID gate register firing
+  on each bounce - not run through `mini6502.py`'s clean-return check,
+  since (like every game/demo in this project) it loops forever by
+  design. Also spot-checked live against `c64emu` with real ROMs.
 
 ## Ideas without an owner yet
 
