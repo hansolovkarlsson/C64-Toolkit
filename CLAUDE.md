@@ -180,20 +180,26 @@ cd emu/tests/sid && make run
 # by design — NOT Commodore's own copyrighted ROMs, see emu/roms/README.md)
 # and checks the whole machine actually boots to a BASIC READY. prompt
 cd emu/tests/boot && make fetch && make run
+
+# --prg SYS-injection return trampoline (a program that legitimately
+# RTS's back after finishing didn't used to work — see emu/src/machine.h's
+# machine_push_prg_return_trampoline() doc comment): hand-written
+# regression check, no real ROMs needed
+cd emu/tests/prg_inject && make run
 ```
 
-All seven gates must pass before building on top of the module(s) they
+All eight gates must pass before building on top of the module(s) they
 cover — see `emu/tests/cpu/README.md`, `emu/tests/memory/README.md`,
 `emu/tests/cia/README.md`, `emu/tests/machine/README.md`,
-`emu/tests/vic/README.md`, `emu/tests/sid/README.md`, and
-`emu/tests/boot/README.md` for what "pass" looks like and how to
-re-derive the CPU suite's success address if a future revision of it
-moves. `emu/tests/boot/` is the odd one out — unlike the other six, it
-isn't a single module's hand-derived unit tests, it's the only gate
-that exercises the CPU, memory map, both CIAs, and VIC-II together
-against real third-party system software (SID isn't part of that
-gate — nothing observable in screen RAM depends on audio, and BASIC's
-own boot path never touches SID registers).
+`emu/tests/vic/README.md`, `emu/tests/sid/README.md`,
+`emu/tests/boot/README.md`, and `emu/tests/prg_inject/README.md` for
+what "pass" looks like and how to re-derive the CPU suite's success
+address if a future revision of it moves. `emu/tests/boot/` is the odd
+one out among the other seven — it isn't a single module's hand-derived
+unit tests, it's the only gate that exercises the CPU, memory map, both
+CIAs, and VIC-II together against real third-party system software
+(SID isn't part of that gate — nothing observable in screen RAM depends
+on audio, and BASIC's own boot path never touches SID registers).
 
 ## Architecture
 
@@ -799,15 +805,17 @@ emulation are explicitly out of scope for now.
   popped whatever garbage was on the hardware stack instead — reliably
   reproducible with a trivial hand-assembled `.asm` program too,
   confirming it had nothing to do with `cc64` itself. Fixed by
-  `push_prg_return_trampoline()`: push a real two-byte return address
-  before jumping in, pointing at a tiny `JMP`-to-self trampoline poked
-  into `$033C` (the classic C64 datassette buffer, safe unused RAM)
-  rather than a real BASIC ROM address — landing back inside BASIC's
-  actual interpreter would need a specific ROM entry point that varies
-  by KERNAL build, so a harmless infinite loop is the ROM-independent
-  choice instead, matching what a `--prg` demo that never returns was
-  already effectively doing. See `emu/ROADMAP.md`'s "Running `cc64`'s
-  output" for the full bisection.
+  `machine_push_prg_return_trampoline()` (`emu/src/machine.c`/`.h` —
+  moved there from `gtk/main.c` once a regression test needed to call
+  it without linking the GTK/SDL shell, see `emu/tests/prg_inject/`):
+  push a real two-byte return address before jumping in, pointing at a
+  tiny `JMP`-to-self trampoline poked into `$033C` (the classic C64
+  datassette buffer, safe unused RAM) rather than a real BASIC ROM
+  address — landing back inside BASIC's actual interpreter would need a
+  specific ROM entry point that varies by KERNAL build, so a harmless
+  infinite loop is the ROM-independent choice instead, matching what a
+  `--prg` demo that never returns was already effectively doing. See
+  `emu/ROADMAP.md`'s "Running `cc64`'s output" for the full bisection.
 
 ### Cross-project test harness: `mini6502.py`
 

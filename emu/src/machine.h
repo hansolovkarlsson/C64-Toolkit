@@ -81,6 +81,46 @@ uint16_t machine_load_prg(Machine *m, const char *path);
  * that shape isn't found. */
 uint16_t machine_find_sys_target(const Machine *m, uint16_t load_addr);
 
+/* $033C is the classic C64 datassette buffer - 192 bytes of RAM never
+ * touched by BASIC/KERNAL unless a real tape operation happens - the
+ * same well-known "free scratch RAM" spot real C64 utilities have long
+ * repurposed when they need a few safe bytes and don't want to fight
+ * over zero page or program-visible memory. Used purely as a landing
+ * pad by machine_push_prg_return_trampoline(), never executed as
+ * anything but a tight self-loop. */
+#define MACHINE_PRG_RETURN_TRAMPOLINE_ADDR 0x033C
+
+/* On real hardware, typing RUN executes a "SYS n" line via a genuine
+ * BASIC-interpreter JSR - which pushes BASIC's own interpreter return
+ * address onto the hardware stack for free, so a program that finishes
+ * and RTS's lands safely back inside BASIC, which then notices there's
+ * nothing left to run and prints READY. again on its own. A caller that
+ * jumps straight to a .prg's SYS target the shortcut way (m->cpu.pc =
+ * machine_find_sys_target()'s result, e.g. gtk/main.c's try_inject_prg())
+ * skips that JSR entirely - fine for a program that loops forever and
+ * never reaches its own top-level RTS, but a genuinely-terminating
+ * program's RTS then pops whatever garbage happened to be on the stack
+ * at the moment of injection instead. This was a real bug, caught by
+ * running an actual cc64-compiled program (which normally returns after
+ * main(), unlike every hand-written asm/examples/ demo exercised before
+ * it) - and confirmed to be about the injection shortcut specifically,
+ * not cc64, by reproducing the identical crash with a trivial
+ * hand-assembled program that also just RTS's instead of looping (see
+ * tests/prg_inject/).
+ *
+ * Call this before jumping the CPU to a SYS target to fix that: it
+ * pushes a real two-byte return address, the same two bytes a genuine
+ * JSR would have, just pointing at a tiny JMP-to-self trampoline poked
+ * into MACHINE_PRG_RETURN_TRAMPOLINE_ADDR instead of a real BASIC ROM
+ * address. Landing back inside BASIC's own interpreter properly (so
+ * READY. reappears and the machine stays interactive) would need a
+ * specific, real ROM entry point, which varies by KERNAL build (this
+ * project targets MEGA65 open-roms, not Commodore's own ROMs) - a
+ * harmless infinite loop is the ROM-independent choice, and it's also
+ * exactly what a never-returning demo already leaves the machine doing
+ * regardless. */
+void machine_push_prg_return_trampoline(Machine *m);
+
 void machine_reset(Machine *m);
 
 /* Normally: executes exactly one CPU instruction (or services a

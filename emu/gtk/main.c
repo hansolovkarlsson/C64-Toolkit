@@ -387,53 +387,6 @@ static int screen_has_ready(Machine *m) {
     return 0;
 }
 
-/* $033C is the classic C64 datassette buffer - 192 bytes of RAM never
- * touched by BASIC/KERNAL unless a real tape operation happens (never,
- * here), the same well-known "free scratch RAM" spot real C64 utilities
- * have long repurposed when they need a few safe bytes and don't want
- * to fight over zero page or program-visible memory. Used below purely
- * as a landing pad, never executed as anything but a tight self-loop. */
-#define PRG_RETURN_TRAMPOLINE_ADDR 0x033C
-
-/* On real hardware, typing RUN executes a "SYS n" line via a genuine
- * BASIC-interpreter JSR - which pushes BASIC's own interpreter return
- * address onto the hardware stack for us, so a program that finishes
- * and RTS's lands safely back inside BASIC, which then notices there's
- * nothing left to run and prints READY. again on its own. The --prg
- * shortcut (see try_inject_prg() below) skips that JSR entirely and
- * just sets cpu.pc directly - fine for every asm/examples/ demo tested
- * this way so far, since they all loop forever and never reach their
- * own top-level RTS, but a genuinely-terminating program's RTS then
- * pops whatever garbage happened to be on the stack at the moment of
- * injection instead. Caught by running actual cc64-compiled programs
- * (which normally return after main(), unlike every hand-written demo
- * exercised here previously) - and confirmed to be about this
- * injection shortcut specifically, not cc64, by reproducing the
- * identical crash with a trivial hand-assembled program that also just
- * RTS's instead of looping.
- *
- * Fixed by pushing a real return address before jumping in, the same
- * two bytes a genuine JSR would have pushed - just pointing at a tiny
- * JMP-to-self trampoline (poked into the datassette buffer, see above)
- * instead of a real BASIC ROM address. Landing back inside BASIC's own
- * interpreter properly (so READY. reappears and the machine stays
- * interactive) would need a specific, real ROM entry point, which
- * varies by KERNAL build (this project targets MEGA65 open-roms, not
- * Commodore's own ROMs) - a harmless infinite loop is the ROM-
- * independent choice, and it's also exactly what a --prg demo that
- * never returns already leaves the machine doing regardless. */
-static void push_prg_return_trampoline(Machine *m) {
-    memory_write(&m->mem, PRG_RETURN_TRAMPOLINE_ADDR, 0x4C); /* JMP */
-    memory_write(&m->mem, (uint16_t)(PRG_RETURN_TRAMPOLINE_ADDR + 1), (uint8_t)(PRG_RETURN_TRAMPOLINE_ADDR & 0xFF));
-    memory_write(&m->mem, (uint16_t)(PRG_RETURN_TRAMPOLINE_ADDR + 2), (uint8_t)(PRG_RETURN_TRAMPOLINE_ADDR >> 8));
-
-    uint16_t ret = (uint16_t)(PRG_RETURN_TRAMPOLINE_ADDR - 1); /* RTS adds 1 back */
-    memory_write(&m->mem, (uint16_t)(0x0100 + m->cpu.sp), (uint8_t)(ret >> 8));
-    m->cpu.sp--;
-    memory_write(&m->mem, (uint16_t)(0x0100 + m->cpu.sp), (uint8_t)(ret & 0xFF));
-    m->cpu.sp--;
-}
-
 /* Waits for a real READY. prompt before injecting --prg (see main())
  * rather than doing it immediately after reset: a real C64 can only
  * LOAD+RUN a program once BASIC/KERNAL have finished their own startup
@@ -460,7 +413,13 @@ static void push_prg_return_trampoline(Machine *m) {
  * second, perfectly stationary white block that traced back to screen
  * code $A0 (the real KERNAL cursor character) at the exact cell the
  * cursor was left at. Demos that already take over the IRQ themselves
- * are unaffected either way. */
+ * are unaffected either way.
+ *
+ * Pushes a fake return address via machine_push_prg_return_trampoline()
+ * before jumping in - see that function's own doc comment in
+ * machine.h for why a raw `cpu.pc = sys_target` isn't safe for a
+ * program that legitimately RTS's back, and tests/prg_inject/ for the
+ * regression test covering it. */
 static void try_inject_prg(App *app) {
     if (app->prg_state != PRG_PENDING) return;
     if (!screen_has_ready(&app->machine)) return;
@@ -472,7 +431,7 @@ static void try_inject_prg(App *app) {
     } else {
         fprintf(stderr, "--prg %s: loaded at $%04X, jumping to $%04X\n", app->prg_path, load_addr, sys_target);
         memory_write(&app->machine.mem, 0xCC, 1);
-        push_prg_return_trampoline(&app->machine);
+        machine_push_prg_return_trampoline(&app->machine);
         app->machine.cpu.pc = sys_target;
     }
     app->prg_state = PRG_DONE; /* either way - don't keep retrying every frame */

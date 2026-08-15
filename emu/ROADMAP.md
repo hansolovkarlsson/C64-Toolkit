@@ -557,7 +557,7 @@ programs are the first ones tested this way that actually return
 normally after `main()` - real ordinary control flow, not something
 `cc64` or this specific demo did wrong.
 
-Fixed by `push_prg_return_trampoline()`: before jumping to the `SYS`
+Fixed by `machine_push_prg_return_trampoline()`: before jumping to the `SYS`
 target, push a real two-byte return address, the same as a genuine
 `JSR` would have - just pointing at a tiny `JMP`-to-self trampoline
 (poked into `$033C`, the classic C64 datassette buffer - 192 bytes of
@@ -576,6 +576,21 @@ only `--prg` injection), and re-running the same headless capture
 against `graphics_demo.prg`, `hello.prg` (`../C/tests/hello.c`), and
 the same minimal hand-assembled terminating `.asm` program - all three
 now run to completion and render correctly with no crash.
+
+Later given a permanent automated regression test,
+`tests/prg_inject/`: it moved `push_prg_return_trampoline()` out of
+`gtk/main.c` and into `machine.c`/`machine.h` as
+`machine_push_prg_return_trampoline()` (a plain `Machine`-level
+function, no GTK/SDL dependency) so a test could call it directly, then
+drove the exact same `machine_load_prg()` ->
+`machine_find_sys_target()` -> `machine_push_prg_return_trampoline()`
+-> `cpu.pc = sys_target` sequence `try_inject_prg()` uses against the
+same minimal hand-assembled terminating control program from the
+bisection above (built as a raw byte array in the test itself - no
+real ROMs, `c64asm`, or `cc64` needed), checking that the `RTS` lands
+back in the trampoline with the stack pointer exactly restored. This is
+now the project's 8th correctness gate - see `README.md`'s "Building"
+section and `tests/prg_inject/README.md`.
 
 ## Joystick input
 

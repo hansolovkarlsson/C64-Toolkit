@@ -42,7 +42,8 @@ together, not just each module in isolation (SID isn't part of this
 gate - nothing in BASIC's own boot path touches SID registers). See
 `tests/cpu/README.md`, `tests/memory/README.md`, `tests/cia/README.md`,
 `tests/machine/README.md`, `tests/vic/README.md`, `tests/sid/README.md`,
-`tests/boot/README.md`, and this file's "Building" section below.
+`tests/boot/README.md`, `tests/prg_inject/README.md`, and this file's
+"Building" section below.
 Joystick input works too - any SDL_GameController-recognized pad
 (Xbox controllers included) drives port 2, the port every
 joystick-aware demo in `../asm/examples/` reads. `--prg` also now
@@ -146,6 +147,7 @@ cd tests/machine && make run                 # CIA <-> C64 wiring (keyboard, joy
 cd tests/vic && make run                     # VIC-II (raster counter, text rendering, char ROM bank quirk)
 cd tests/sid && make run                     # SID (waveforms, ADSR envelopes, noise LFSR, hard sync)
 cd tests/boot && make fetch && make run      # end-to-end: real ROMs, boots to READY.
+cd tests/prg_inject && make run              # --prg SYS-injection return trampoline (see below)
 ```
 
 `tests/boot/` is the one gate that isn't a single module's own
@@ -155,6 +157,14 @@ unencumbered KERNAL/BASIC/character ROM replacement, safe to fetch
 unlike Commodore's own ROMs - see `tests/boot/README.md`) and checks
 that the whole machine actually boots to a `READY.` prompt, catching
 integration bugs no single module's tests could.
+
+`tests/prg_inject/` is a regression test for a real bug in `--prg`'s
+SYS-injection shortcut (a program that legitimately `RTS`s back after
+finishing used to crash by popping garbage off the stack - see
+`src/machine.h`'s `machine_push_prg_return_trampoline()` doc comment
+and `ROADMAP.md`'s "Running `cc64`'s output"). It runs a minimal
+hand-assembled control program (no real ROMs needed) through the exact
+same injection sequence `gtk/main.c` uses.
 
 See [`ROADMAP.md`](ROADMAP.md) for what's next (SID's analog filter).
 

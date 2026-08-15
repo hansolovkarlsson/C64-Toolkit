@@ -163,6 +163,18 @@ uint16_t machine_find_sys_target(const Machine *m, uint16_t load_addr) {
     return saw_digit ? target : 0;
 }
 
+void machine_push_prg_return_trampoline(Machine *m) {
+    memory_write(&m->mem, MACHINE_PRG_RETURN_TRAMPOLINE_ADDR, 0x4C); /* JMP */
+    memory_write(&m->mem, (uint16_t)(MACHINE_PRG_RETURN_TRAMPOLINE_ADDR + 1), (uint8_t)(MACHINE_PRG_RETURN_TRAMPOLINE_ADDR & 0xFF));
+    memory_write(&m->mem, (uint16_t)(MACHINE_PRG_RETURN_TRAMPOLINE_ADDR + 2), (uint8_t)(MACHINE_PRG_RETURN_TRAMPOLINE_ADDR >> 8));
+
+    uint16_t ret = (uint16_t)(MACHINE_PRG_RETURN_TRAMPOLINE_ADDR - 1); /* RTS adds 1 back */
+    memory_write(&m->mem, (uint16_t)(0x0100 + m->cpu.sp), (uint8_t)(ret >> 8));
+    m->cpu.sp--;
+    memory_write(&m->mem, (uint16_t)(0x0100 + m->cpu.sp), (uint8_t)(ret & 0xFF));
+    m->cpu.sp--;
+}
+
 void machine_reset(Machine *m) {
     cpu_reset(&m->cpu);
 }
