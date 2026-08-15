@@ -634,6 +634,23 @@ emulation are explicitly out of scope for now.
   images are present, echoed to the real screen the same as on real
   hardware — no separate debug logging needed anymore now that VIC-II
   actually renders the result.
+  **Menu bar**: File > Open PRG... (Cmd/Ctrl+O, GTK's modern async
+  `GtkFileDialog`) does the same `SYS`-target injection `--prg` does at
+  startup, on demand — resets the machine first so `try_inject_prg()`
+  can wait for a fresh READY. prompt again, the same as it always does.
+  File > Reset (Cmd/Ctrl+R) is a real KERNAL soft reset
+  (`machine_reset()`, not a RAM clear) and deliberately doesn't
+  re-inject whatever was last loaded, matching a real RESET button.
+  File > Quit (Cmd/Ctrl+Q) — a real, working one; macOS gives even an
+  unbundled binary like this its own generic system app menu, but that
+  one's stub "Quit" isn't wired to anything by GTK's quartz backend.
+  Options > Border Color... uses the older `GtkColorChooserDialog`
+  deliberately, not its GTK 4.10+ replacement `GtkColorDialog` — the
+  newer API dropped custom-palette support entirely, and locking the
+  picker to exactly the 16 real C64 colors (not arbitrary RGB) needs
+  that. `<Primary>`, not `<Control>`, in every accelerator spec — the
+  portable GTK alias for "the platform's real modifier key" (Cmd on
+  macOS, Ctrl elsewhere).
   **Joystick**: any SDL_GameController-recognized pad (Xbox
   controllers work via SDL2's built-in mappings, no extra config)
   drives `machine_set_joystick()`'s port 2 — the port every

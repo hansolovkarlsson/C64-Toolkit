@@ -110,6 +110,17 @@ runs a demo's real KERNAL calls, sprites, bitmap graphics, and SID
 audio for real - see `ROADMAP.md`'s "Running `asm/`'s example
 programs" for what's been verified this way so far.
 
+The window has a real menu bar: **File > Open PRG...** (Cmd/Ctrl+O)
+does the same injection `--prg` does at startup, just on demand - pick
+any `.prg` at any time, including mid-run (it resets the machine back
+to a fresh READY. prompt first, the same as a real LOAD+RUN would need
+to). **File > Reset** (Cmd/Ctrl+R) is a real KERNAL soft reset, the
+same as pressing a real C64's RESET button - it doesn't reload
+whatever was last running. **File > Quit** (Cmd/Ctrl+Q) closes the
+window and exits. **Options > Border Color...** opens a picker locked
+to the 16 real C64 colors (not arbitrary RGB) and writes straight to
+`$D020`, the same as a running program poking it itself.
+
 The window drives the machine at ~50 Hz (PAL frame rate) and shows
 real VIC-II output - see `vic.h`'s header comment for exactly what's
 modeled (40x25 hi-res, multicolor, and extended-background-color text

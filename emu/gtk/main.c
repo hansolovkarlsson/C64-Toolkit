@@ -49,6 +49,18 @@
  * VIC-II sprite/bitmap rendering and real SID audio actually get
  * exercised end-to-end, not just each chip's own hand-derived unit
  * tests.
+ *
+ * Menu bar: File > Open PRG... (Cmd/Ctrl+O - the same injection
+ * try_inject_prg() does for --prg, just triggered on demand instead of
+ * once at startup, see action_open_prg()), File > Reset (Cmd/Ctrl+R - a
+ * real KERNAL soft reset, see action_reset()), File > Quit (Cmd/Ctrl+Q
+ * - a real, working quit; macOS gives an unbundled binary like this
+ * one its own generic system app menu too, but that one's stub "Quit"
+ * entry isn't wired to anything by GTK's quartz backend, hence a real
+ * one here), and Options > Border Color... (a picker locked to the 16
+ * real C64 colors, see action_border_color()). <Primary> rather than
+ * <Control> in the accelerator specs throughout - the portable GTK
+ * alias that resolves to Cmd on macOS, not the literal Control key.
  */
 
 #include <gtk/gtk.h>
@@ -182,13 +194,22 @@ typedef struct {
      * (unlike the audio ring buffer). */
     SDL_GameController *controller;
 
-    /* Optional --prg PATH (see main()): a .prg to auto-inject and jump
-     * straight into once boot reaches READY. - see tick()'s own
-     * comment for why it waits for that rather than injecting
-     * immediately. prg_state tracks progress so this only ever
-     * happens once per run. */
-    const char *prg_path;
+    /* A .prg to auto-inject and jump straight into once boot reaches
+     * READY. - see try_inject_prg()'s own comment for why it waits for
+     * that rather than injecting immediately. Set once from --prg PATH
+     * at startup (see main()), or any number of times afterward from
+     * the File > Open PRG... menu action (see action_open_prg()) -
+     * always g_strdup()'d/g_free()'d, never a borrowed argv pointer,
+     * so re-opening a different file doesn't leak or double-free the
+     * previous one. prg_state tracks progress so a given prg_path only
+     * ever gets injected once each time it's set, not every frame. */
+    char *prg_path;
     enum { PRG_NONE, PRG_PENDING, PRG_DONE } prg_state;
+
+    /* The top-level window, kept around so action callbacks (File >
+     * Open PRG..., Reset, Options > Border Color... - see activate())
+     * have something to parent their dialogs to. */
+    GtkWidget *window;
 } App;
 
 /* GDK keyval -> C64 keyboard matrix (pa_bit selects the column CIA1's
@@ -581,11 +602,225 @@ static void on_window_destroy(GtkWidget *window, gpointer user_data) {
     }
 }
 
+/* File > Open PRG..., File > Reset, Options > Border Color... - the
+ * menu actions wired up in activate() below. */
+
+/* Same 16 values as vic.c's own VIC_PALETTE (see that file's header
+ * comment for where they come from - "Pepto's palette") - duplicated
+ * here rather than exposed via vic.h, since VIC_PALETTE is a
+ * VIC-II-internal rendering detail, and this UI-level color picker
+ * only needs the same 16 reference RGB values, not a shared API
+ * between the chip model and the GTK shell. */
+static const struct { uint8_t r, g, b; } C64_PALETTE[16] = {
+    {0x00,0x00,0x00}, {0xFF,0xFF,0xFF}, {0x68,0x37,0x2B}, {0x70,0xA4,0xB2},
+    {0x6F,0x3D,0x86}, {0x58,0x8D,0x43}, {0x35,0x28,0x79}, {0xB8,0xC7,0x6F},
+    {0x6F,0x4F,0x25}, {0x43,0x39,0x00}, {0x9A,0x67,0x59}, {0x44,0x44,0x44},
+    {0x6C,0x6C,0x6C}, {0x9A,0xD2,0x84}, {0x6C,0x5E,0xB5}, {0x95,0x95,0x95},
+};
+
+/* Async completion for File > Open PRG...'s file dialog (GtkFileDialog,
+ * not the older GtkFileChooserNative/Dialog - deprecated as of GTK
+ * 4.10, and this project's GTK is new enough that there's no reason to
+ * use the deprecated one here the way Options > Border Color... has
+ * to, below). Re-uses tick()'s existing try_inject_prg() machinery
+ * unchanged: setting prg_state to PENDING and resetting the machine is
+ * exactly what happens at startup for --prg, just triggered on demand
+ * instead of once before the window ever opens. machine_reset() (a
+ * real KERNAL soft reset, not a RAM clear) is required first, not
+ * optional - try_inject_prg() only fires once BASIC/KERNAL reach a
+ * real READY. prompt again (see that function's own comment for why),
+ * which won't happen on its own if a previous program is still
+ * mid-run. A NULL file (the common case: the user hit Cancel, which
+ * gtk_file_dialog_open_finish() reports as a GTK_DIALOG_ERROR_DISMISSED
+ * GError, not a value to act on) is silently a no-op, not an error. */
+static void on_open_finish(GObject *source, GAsyncResult *result, gpointer user_data) {
+    App *app = user_data;
+    GError *error = NULL;
+    GFile *file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), result, &error);
+    if (file) {
+        char *path = g_file_get_path(file);
+        if (path) {
+            g_free(app->prg_path);
+            app->prg_path = path; /* owned - see App's own prg_path comment */
+            app->prg_state = PRG_PENDING;
+            machine_reset(&app->machine);
+        }
+        g_object_unref(file);
+    } else {
+        g_clear_error(&error);
+    }
+    g_object_unref(source);
+}
+
+static void action_open_prg(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    App *app = user_data;
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Open PRG");
+    GtkFileFilter *filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "C64 programs (*.prg)");
+    gtk_file_filter_add_pattern(filter, "*.prg");
+    gtk_file_dialog_set_default_filter(dialog, filter);
+    g_object_unref(filter);
+    gtk_file_dialog_open(dialog, GTK_WINDOW(app->window), NULL, on_open_finish, app);
+}
+
+/* File > Reset - the same real KERNAL soft reset (cpu_reset(), not a
+ * RAM clear) a real C64's RESET button triggers: PC jumps back to the
+ * reset vector and BASIC/KERNAL's own init code runs again from
+ * scratch, which is what re-clears the screen/re-enables the cursor/
+ * etc., not anything this action does itself. Deliberately does NOT
+ * touch prg_state - matching real hardware, RESET returns to BASIC,
+ * it doesn't reload/rerun whatever was last loaded from "disk". */
+static void action_reset(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    App *app = user_data;
+    machine_reset(&app->machine);
+}
+
+/* File > Quit. On macOS, an unbundled binary like this one still gets
+ * a generic system-provided app menu (the one showing the executable's
+ * own name) with its own stub "Quit" entry - that one is NOT wired to
+ * anything by GTK's own quartz backend and does nothing when clicked
+ * (this is what was reported as "Quit isn't enabled"), so File > Quit
+ * here is a real, working replacement for it: destroying the window
+ * triggers on_window_destroy()'s cleanup (removing the frame timer),
+ * and GtkApplication quits its own main loop automatically once its
+ * last window is gone (standard behavior - nothing here ever called
+ * g_application_hold(), so there's no reason for it to keep running). */
+static void action_quit(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    App *app = user_data;
+    gtk_window_destroy(GTK_WINDOW(app->window));
+}
+
+/* Nearest-neighbor fallback for Options > Border Color...'s dialog:
+ * the palette grid below (see action_border_color()) is the intended
+ * way to pick a color, landing on an exact C64_PALETTE entry every
+ * time, but GTK's color chooser also always offers a free-form custom
+ * RGB picker as an escape hatch - squared Euclidean distance in RGB
+ * space picks whichever of the 16 real colors a free-picked value is
+ * actually closest to, rather than silently failing or picking index
+ * 0, if a caller ever goes that route instead of clicking a swatch. */
+static int nearest_c64_color(const GdkRGBA *rgba) {
+    uint8_t r = (uint8_t)(rgba->red * 255.0 + 0.5);
+    uint8_t g = (uint8_t)(rgba->green * 255.0 + 0.5);
+    uint8_t b = (uint8_t)(rgba->blue * 255.0 + 0.5);
+    int best = 0;
+    long best_dist = -1;
+    for (int i = 0; i < 16; i++) {
+        long dr = (long)r - C64_PALETTE[i].r;
+        long dg = (long)g - C64_PALETTE[i].g;
+        long db = (long)b - C64_PALETTE[i].b;
+        long dist = dr * dr + dg * dg + db * db;
+        if (best_dist < 0 || dist < best_dist) {
+            best_dist = dist;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/* Writes straight to $D020 through memory_write() - the same external
+ * "as if the CPU itself executed STA $D020" path try_inject_prg()
+ * already uses for $CC's cursor flag - rather than poking Vic's
+ * register array directly, so this can never drift from what a real
+ * running program touching the same address would do. */
+static void on_border_color_response(GtkDialog *dialog, int response, gpointer user_data) {
+    App *app = user_data;
+    if (response == GTK_RESPONSE_OK) {
+        GdkRGBA rgba;
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(dialog), &rgba);
+        int idx = nearest_c64_color(&rgba);
+        memory_write(&app->machine.mem, 0xD020, (uint8_t)idx);
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+/* Deliberately GtkColorChooserDialog, not the newer GtkColorDialog
+ * (unlike File > Open PRG..., above, which does use its own modern
+ * replacement): GtkColorDialog (GTK 4.10+) dropped custom-palette
+ * support entirely - it's just title/modal/with-alpha plus an async
+ * "pick any RGB" chooser, no way to constrain it to a fixed set of
+ * swatches (checked directly against this project's own installed
+ * gtkcolordialog.h). Since offering exactly the 16 real C64 colors
+ * (not arbitrary RGB) is the whole point here, the deprecated API is
+ * the only one that can actually do this - kept intentionally, not an
+ * oversight. */
+static void action_border_color(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    App *app = user_data;
+    GtkWidget *dialog = gtk_color_chooser_dialog_new("Border Color", GTK_WINDOW(app->window));
+    gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(dialog), FALSE);
+    GdkRGBA colors[16];
+    for (int i = 0; i < 16; i++) {
+        colors[i].red = C64_PALETTE[i].r / 255.0;
+        colors[i].green = C64_PALETTE[i].g / 255.0;
+        colors[i].blue = C64_PALETTE[i].b / 255.0;
+        colors[i].alpha = 1.0;
+    }
+    gtk_color_chooser_add_palette(GTK_COLOR_CHOOSER(dialog), GTK_ORIENTATION_HORIZONTAL, 4, 16, colors);
+    g_signal_connect(dialog, "response", G_CALLBACK(on_border_color_response), app);
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
 static void activate(GtkApplication *gtk_app, gpointer user_data) {
     App *app = user_data;
 
     GtkWidget *window = gtk_application_window_new(gtk_app);
+    app->window = window;
     gtk_window_set_title(GTK_WINDOW(window), "c64emu");
+
+    /* File > Open PRG.../Reset/Quit, Options > Border Color... -
+     * actions live on the window (win.*), matching the accelerators
+     * set below; a GtkApplicationWindow is a GActionMap on its own, no
+     * separate group object needed. */
+    static const GActionEntry win_actions[] = {
+        {"open-prg", action_open_prg, NULL, NULL, NULL, {0}},
+        {"reset", action_reset, NULL, NULL, NULL, {0}},
+        {"quit", action_quit, NULL, NULL, NULL, {0}},
+        {"border-color", action_border_color, NULL, NULL, NULL, {0}},
+    };
+    g_action_map_add_action_entries(G_ACTION_MAP(window), win_actions, G_N_ELEMENTS(win_actions), app);
+
+    GMenu *menu_bar = g_menu_new();
+    GMenu *file_menu = g_menu_new();
+    g_menu_append(file_menu, "Open PRG…", "win.open-prg");
+    g_menu_append(file_menu, "Reset", "win.reset");
+    /* A separate section, not just another g_menu_append() on
+     * file_menu - GMenu has no direct "separator" concept the way the
+     * old GtkMenuBar did; a section boundary is what actually renders
+     * as one, visually setting Quit apart from Open PRG.../Reset. */
+    GMenu *quit_section = g_menu_new();
+    g_menu_append(quit_section, "Quit", "win.quit");
+    g_menu_append_section(file_menu, NULL, G_MENU_MODEL(quit_section));
+    g_object_unref(quit_section);
+    g_menu_append_submenu(menu_bar, "File", G_MENU_MODEL(file_menu));
+    g_object_unref(file_menu);
+    GMenu *options_menu = g_menu_new();
+    g_menu_append(options_menu, "Border Color…", "win.border-color");
+    g_menu_append_submenu(menu_bar, "Options", G_MENU_MODEL(options_menu));
+    g_object_unref(options_menu);
+    gtk_application_set_menubar(gtk_app, G_MENU_MODEL(menu_bar));
+    g_object_unref(menu_bar);
+    gtk_application_window_set_show_menubar(GTK_APPLICATION_WINDOW(window), TRUE);
+
+    /* <Primary> rather than <Control>: the portable GTK accelerator
+     * alias that resolves to Ctrl on Linux/Windows and Cmd on macOS's
+     * quartz backend - <Control> would mean the literal physical
+     * Control key even on a Mac, not the Cmd key users actually expect
+     * for Open/Reset/Quit there. */
+    const char *open_accels[] = {"<Primary>o", NULL};
+    gtk_application_set_accels_for_action(gtk_app, "win.open-prg", open_accels);
+    const char *reset_accels[] = {"<Primary>r", NULL};
+    gtk_application_set_accels_for_action(gtk_app, "win.reset", reset_accels);
+    const char *quit_accels[] = {"<Primary>q", NULL};
+    gtk_application_set_accels_for_action(gtk_app, "win.quit", quit_accels);
+
     /* The native VIC_CANVAS_W x VIC_CANVAS_H resolution (~403x284) is
      * tiny on a modern display, so the window opens at a readable
      * WINDOW_ZOOM_DEFAULT multiple of it instead - draw_screen() scales
@@ -684,7 +919,7 @@ int main(int argc, char **argv) {
     const char *rom_dir = "roms";
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--prg") == 0 && i + 1 < argc) {
-            app.prg_path = argv[++i];
+            app.prg_path = g_strdup(argv[++i]); /* see App's own prg_path comment for why this is always owned, never a borrowed argv pointer */
             app.prg_state = PRG_PENDING;
         } else {
             rom_dir = argv[i];
