@@ -100,6 +100,22 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   re-express directly in `cc64`, not a large amount of logic worth the
   cost of building a whole FFI mechanism to avoid re-deriving. See
   `C/ROADMAP.md`'s "Standard library" section.
+- **Started `cc64`'s graphics/sound library**: `C/bin/lib/graphics.h`
+  (VIC-II text-screen and hardware-sprite helpers) and `C/bin/lib/
+  sound.h` (SID helpers, all 3 voices - `asm/lib/sound.inc`'s macros
+  are voice-1-only) — the first real library built under the
+  independent-of-`asm/lib/` decision above. Both are plain `peek`/
+  `poke`-based `cc64` code, same style as `string.h`/`print.h`. New
+  `C/tests/graphics.c`/`sound.c` verify every function by `peek()`ing
+  the VIC-II/SID register bytes it wrote back and checking them against
+  a hand-worked-out value (there's no real rendering/audio in
+  `mini6502.py` to check against directly) — including the sprite-
+  position MSB register's read-modify-write behavior and both 16-bit
+  SID register helpers' `unsigned` masking. Also spot-checked live
+  against `c64emu` with real ROMs (no crash, `--prg` return-trampoline
+  path exercised again since `main()` returns normally). Still wanted:
+  an expanded "BASIC-equivalent" convenience library — see
+  `C/ROADMAP.md`'s "Standard library" section.
 
 ## Ideas without an owner yet
 

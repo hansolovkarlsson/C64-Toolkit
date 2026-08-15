@@ -88,7 +88,7 @@ to approach the codebase for the first time:
 | `src/codegen_expr.c` | Expression codegen - the largest file, where most operators and pointer handling live |
 | `src/codegen_stmt.c` | Statement codegen, storage layout, and the per-function frame save/restore routines that make recursion work |
 | `src/main.c` | The command-line driver tying every phase together |
-| `lib/string.h`, `lib/print.h` | The standard library - see below |
+| `lib/string.h`, `lib/print.h`, `lib/graphics.h`, `lib/sound.h` | The standard library - see below |
 
 
 ## What's supported
@@ -781,12 +781,40 @@ this needed a real `unsigned int` type to exist first), `print_hex`
 (4 hex digits, the exact bit pattern regardless of sign), and
 `newline`.
 
-Both headers are **header-only**: `#include` splices their text
+`lib/graphics.h`: VIC-II text-screen and hardware-sprite helpers, all
+`peek()`/`poke()`-based (the same primitive `graphics_demo.c`, the
+program this library was extracted from, used directly) -
+`border_color`/`background_color`, `plot_char`/`clear_screen` (direct
+screen-RAM/color-RAM writes, bypassing the KERNAL cursor entirely -
+`putchar`/`puts` are still the way to print ordinary text), and
+`sprite_enable`/`sprite_pos`/`sprite_color`/`sprite_pointer`/
+`sprite_multicolor`/`sprite_shared_colors`/`sprite_expand`/
+`sprite_priority` for all 8 hardware sprites.
+
+`lib/sound.h`: SID helpers - `sid_init`/`sid_volume`, `sid_freq`/
+`sid_pulse_width` (both `unsigned int`, the full 16-/12-bit register
+range), `sid_adsr` (packs attack/decay/sustain/release into the SID's
+real 2-register nibble layout, so callers never pack nibbles by hand),
+`sid_gate`/`sid_silence`, and `sid_play` (a one-shot fire-and-forget
+effect: sets frequency and envelope, then gates on). Every function
+takes a voice number (0-2) and works on any of the SID's 3 independent
+voices.
+
+`graphics.h`/`sound.h` are independent of `asm/lib/graphics.inc`/
+`sound.inc`, not wrappers around them - `cc64` has no inline-assembly/
+foreign-function-call mechanism to call into external assembly at all,
+and `asm/lib/`'s macros use a raw-register calling convention (plus
+caller-defined zero-page pointers) that doesn't match `cc64`'s own
+per-function frame-save/restore convention anyway. See the root
+[`ROADMAP.md`](../ROADMAP.md)'s "Recently done" for the full reasoning
+behind that decision.
+
+All four headers are **header-only**: `#include` splices their text
 directly into your program (see "HOW #include WORKS" in `src/cc64.h`),
 so every function you include gets fully compiled into your program
 whether you call it or not - there's no linker to strip the unused
-ones out. Immaterial for a handful of small functions; worth knowing
-if this library ever grows into something bigger.
+ones out. Immaterial for a handful of small functions each; worth
+knowing if this library ever grows into something bigger.
 
 ## Testing
 
@@ -913,12 +941,21 @@ comments); all four unsigned comparisons; and unsigned wraparound past
 too. Separate error-path checks (not part of the passing suite) cover
 `unsigned` combined with `struct`/`union`/`enum`/`void`/a typedef name,
 none of which are valid since `isUnsigned` only ever means something
-for a plain `int` (see "How unsigned works" below).
+for a plain `int` (see "How unsigned works" below). `tests/graphics.c`
+and `tests/sound.c` cover `lib/graphics.h`/`lib/sound.h`: each library
+function is called, then the VIC-II/SID register bytes it documents
+are `peek()`'d back and printed, checked against a value worked out by
+hand from that function's own register-layout comments (there's no
+real VIC-II/SID rendering to look at in `mini6502.py`, so this is
+checking the register writes directly, the same way every other test
+here checks program state rather than pixels/audio) - including the
+sprite-position MSB bit's read-modify-write behavior and both 16-bit
+register helpers' (`sid_freq`/`sid_pulse_width`) `unsigned` masking.
 
-Run all thirteen:
+Run all fifteen:
 
 ```sh
-for f in hello features forward pointers recursion include structs dowhile_switch printf enum union typedef unsigned; do
+for f in hello features forward pointers recursion include structs dowhile_switch printf enum union typedef unsigned graphics sound; do
     ./cc64 tests/$f.c -o tests/$f.asm
     ./c64asm tests/$f.asm -o tests/$f.prg --listing tests/$f.lst
     python3 mini6502.py tests/$f.prg tests/$f.lst

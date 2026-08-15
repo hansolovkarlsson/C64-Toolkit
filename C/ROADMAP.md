@@ -181,17 +181,25 @@ where there's something specific worth knowing before starting on one.
 ## Standard library
 
 Currently: `lib/string.h` (`strlen`/`strcpy`/`strcat`/`strcmp`/`strchr`/
-`memset`/`memcpy`) and `lib/print.h` (`print_int`/`print_uint`/
-`print_hex`/`newline` - `printf` itself is a compiler builtin now, not
-part of this header, and needs no `#include` at all) — see
-`README.md`'s "The standard library" for the full API.
+`memset`/`memcpy`), `lib/print.h` (`print_int`/`print_uint`/`print_hex`/
+`newline` - `printf` itself is a compiler builtin now, not part of this
+header, and needs no `#include` at all), `lib/graphics.h` (VIC-II
+text-screen and hardware-sprite helpers - border/background color,
+direct screen-RAM/color-RAM writes, all 8 sprites' position/color/
+pointer/multicolor/expand/priority), and `lib/sound.h` (SID helpers,
+all 3 voices - frequency/pulse width, ADSR envelope packing, gate/
+silence, and a one-shot `sid_play`) — see `README.md`'s "The standard
+library" for the full API.
 
-Wanted, not started: an expanded "BASIC-equivalent" convenience
-library, a graphics library, a sound library. These will be built as
-independent, ordinary `cc64` code (`peek`/`poke`-based, same style as
-`lib/string.h`/`lib/print.h`) rather than wrapping `asm/lib/`'s
-`c64asm` routines — see the root [`../ROADMAP.md`](../ROADMAP.md)'s
-"Recently done" for why wrapping isn't actually on the table today
-(`cc64` has no inline-assembly/foreign-function-call mechanism, and
-`asm/lib/`'s raw-register calling convention doesn't match `cc64`'s
-own anyway).
+`graphics.h`/`sound.h` are independent, ordinary `cc64` code
+(`peek`/`poke`-based, same style as `lib/string.h`/`lib/print.h`)
+rather than wrappers around `asm/lib/`'s `c64asm` routines — see the
+root [`../ROADMAP.md`](../ROADMAP.md)'s "Recently done" for why
+wrapping wasn't actually on the table (`cc64` has no inline-assembly/
+foreign-function-call mechanism, and `asm/lib/`'s raw-register calling
+convention doesn't match `cc64`'s own anyway).
+
+Still wanted, not started: an expanded "BASIC-equivalent" convenience
+library (typed-line input, a few common KERNAL wrappers) - see
+`asm/lib/input.inc`/`text.inc` for the kind of thing this would cover,
+re-derived rather than wrapped for the same reason above.
