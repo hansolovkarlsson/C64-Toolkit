@@ -3398,6 +3398,10 @@ __fn_main_v_ydir:
     .fill 2, 0
 __fn_main_v_bounced:
     .fill 2, 0
+__fn_main_v_raster:
+    .fill 2, 0
+__fn_main_v_frame_fired:
+    .fill 2, 0
 __fn_main_pushframe:
     LDA __rt_csp
     STA __zpAP
@@ -3408,11 +3412,11 @@ __fn_main_pushfr_loop:
     LDA __fn_main_frame,Y
     STA (__zpAP),Y
     INY
-    CPY #16
+    CPY #20
     BNE __fn_main_pushfr_loop
     CLC
     LDA __rt_csp
-    ADC #16
+    ADC #20
     STA __rt_csp
     LDA __rt_csp+1
     ADC #0
@@ -3422,7 +3426,7 @@ __fn_main_pushfr_loop:
 __fn_main_popframe:
     SEC
     LDA __rt_csp
-    SBC #16
+    SBC #20
     STA __rt_csp
     STA __zpAP
     LDA __rt_csp+1
@@ -3434,7 +3438,7 @@ __fn_main_popfr_loop:
     LDA (__zpAP),Y
     STA __fn_main_frame,Y
     INY
-    CPY #16
+    CPY #20
     BNE __fn_main_popfr_loop
     RTS
  
@@ -3822,17 +3826,17 @@ __L26:
     STA __fn_sprite_color_v_c+1
     JSR __fn_sprite_color
     JSR __fn_sprite_color_popframe
-    LDA #<24
+    LDA #<56
     STA __zpR
-    LDA #>24
+    LDA #>56
     STA __zpR+1
     LDA __zpR
     STA __fn_main_v_x
     LDA __zpR+1
     STA __fn_main_v_x+1
-    LDA #<50
+    LDA #<85
     STA __zpR
-    LDA #>50
+    LDA #>85
     STA __zpR+1
     LDA __zpR
     STA __fn_main_v_y
@@ -3903,6 +3907,14 @@ __L26:
     JSR __fn_sid_init_pushframe
     JSR __fn_sid_init
     JSR __fn_sid_init_popframe
+    LDA #<0
+    STA __zpR
+    LDA #>0
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_main_v_frame_fired
+    LDA __zpR+1
+    STA __fn_main_v_frame_fired+1
 __L41:
     LDA #<1
     STA __zpR
@@ -3913,7 +3925,6 @@ __L41:
     BNE __L43
     JMP __L42
 __L43:
-__L44:
     LDA #<53266
     STA __zpR
     LDA #>53266
@@ -3927,20 +3938,58 @@ __L44:
     STA __zpR
     LDA #0
     STA __zpR+1
+    LDA __zpR
+    STA __fn_main_v_raster
+    LDA __zpR+1
+    STA __fn_main_v_raster+1
+    LDA __fn_main_v_raster
+    STA __zpR
+    LDA __fn_main_v_raster+1
+    STA __zpR+1
     JSR __rt_push
     LDA #<251
     STA __zpR
     LDA #>251
     STA __zpR+1
     JSR __rt_pop2
-    JSR __rt_ne16
+    JSR __rt_ge16
     LDA __zpR
     ORA __zpR+1
     BNE __L46
-    JMP __L45
-__L46:
     JMP __L44
-__L45:
+__L46:
+    LDA __fn_main_v_frame_fired
+    STA __zpR
+    LDA __fn_main_v_frame_fired+1
+    STA __zpR+1
+    LDA __zpR
+    ORA __zpR+1
+    BNE __L51
+    JMP __L49
+__L51:
+    LDA #0
+    STA __zpR
+    STA __zpR+1
+    JMP __L50
+__L49:
+    LDA #1
+    STA __zpR
+    LDA #0
+    STA __zpR+1
+__L50:
+    LDA __zpR
+    ORA __zpR+1
+    BNE __L52
+    JMP __L47
+__L52:
+    LDA #<1
+    STA __zpR
+    LDA #>1
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_main_v_frame_fired
+    LDA __zpR+1
+    STA __fn_main_v_frame_fired+1
     LDA #<0
     STA __zpR
     LDA #>0
@@ -3955,9 +4004,9 @@ __L45:
     STA __zpR+1
     LDA __zpR
     ORA __zpR+1
-    BNE __L49
-    JMP __L47
-__L49:
+    BNE __L55
+    JMP __L53
+__L55:
     LDA __fn_main_v_x
     STA __zpR
     LDA __fn_main_v_x+1
@@ -3984,17 +4033,17 @@ __L49:
     LDA __fn_main_v_x+1
     STA __zpR+1
     JSR __rt_push
-    LDA #<320
+    LDA #<352
     STA __zpR
-    LDA #>320
+    LDA #>352
     STA __zpR+1
     JSR __rt_pop2
     JSR __rt_ge16
     LDA __zpR
     ORA __zpR+1
-    BNE __L52
-    JMP __L50
-__L52:
+    BNE __L58
+    JMP __L56
+__L58:
     LDA #<0
     STA __zpR
     LDA #>0
@@ -4011,11 +4060,11 @@ __L52:
     STA __fn_main_v_bounced
     LDA __zpR+1
     STA __fn_main_v_bounced+1
-    JMP __L51
-__L50:
-__L51:
-    JMP __L48
-__L47:
+    JMP __L57
+__L56:
+__L57:
+    JMP __L54
+__L53:
     LDA __fn_main_v_x
     STA __zpR
     LDA __fn_main_v_x+1
@@ -4044,17 +4093,17 @@ __L47:
     LDA __fn_main_v_x+1
     STA __zpR+1
     JSR __rt_push
-    LDA #<24
+    LDA #<56
     STA __zpR
-    LDA #>24
+    LDA #>56
     STA __zpR+1
     JSR __rt_pop2
     JSR __rt_le16
     LDA __zpR
     ORA __zpR+1
-    BNE __L55
-    JMP __L53
-__L55:
+    BNE __L61
+    JMP __L59
+__L61:
     LDA #<1
     STA __zpR
     LDA #>1
@@ -4063,72 +4112,6 @@ __L55:
     STA __fn_main_v_xdir
     LDA __zpR+1
     STA __fn_main_v_xdir+1
-    LDA #<1
-    STA __zpR
-    LDA #>1
-    STA __zpR+1
-    LDA __zpR
-    STA __fn_main_v_bounced
-    LDA __zpR+1
-    STA __fn_main_v_bounced+1
-    JMP __L54
-__L53:
-__L54:
-__L48:
-    LDA __fn_main_v_ydir
-    STA __zpR
-    LDA __fn_main_v_ydir+1
-    STA __zpR+1
-    LDA __zpR
-    ORA __zpR+1
-    BNE __L58
-    JMP __L56
-__L58:
-    LDA __fn_main_v_y
-    STA __zpR
-    LDA __fn_main_v_y+1
-    STA __zpR+1
-    JSR __rt_push
-    LDA #<1
-    STA __zpR
-    LDA #>1
-    STA __zpR+1
-    JSR __rt_pop2
-    CLC
-    LDA __zpR2
-    ADC __zpR
-    STA __zpR
-    LDA __zpR2+1
-    ADC __zpR+1
-    STA __zpR+1
-    LDA __zpR
-    STA __fn_main_v_y
-    LDA __zpR+1
-    STA __fn_main_v_y+1
-    LDA __fn_main_v_y
-    STA __zpR
-    LDA __fn_main_v_y+1
-    STA __zpR+1
-    JSR __rt_push
-    LDA #<229
-    STA __zpR
-    LDA #>229
-    STA __zpR+1
-    JSR __rt_pop2
-    JSR __rt_ge16
-    LDA __zpR
-    ORA __zpR+1
-    BNE __L61
-    JMP __L59
-__L61:
-    LDA #<0
-    STA __zpR
-    LDA #>0
-    STA __zpR+1
-    LDA __zpR
-    STA __fn_main_v_ydir
-    LDA __zpR+1
-    STA __fn_main_v_ydir+1
     LDA #<1
     STA __zpR
     LDA #>1
@@ -4140,8 +4123,74 @@ __L61:
     JMP __L60
 __L59:
 __L60:
-    JMP __L57
-__L56:
+__L54:
+    LDA __fn_main_v_ydir
+    STA __zpR
+    LDA __fn_main_v_ydir+1
+    STA __zpR+1
+    LDA __zpR
+    ORA __zpR+1
+    BNE __L64
+    JMP __L62
+__L64:
+    LDA __fn_main_v_y
+    STA __zpR
+    LDA __fn_main_v_y+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<1
+    STA __zpR
+    LDA #>1
+    STA __zpR+1
+    JSR __rt_pop2
+    CLC
+    LDA __zpR2
+    ADC __zpR
+    STA __zpR
+    LDA __zpR2+1
+    ADC __zpR+1
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_main_v_y
+    LDA __zpR+1
+    STA __fn_main_v_y+1
+    LDA __fn_main_v_y
+    STA __zpR
+    LDA __fn_main_v_y+1
+    STA __zpR+1
+    JSR __rt_push
+    LDA #<264
+    STA __zpR
+    LDA #>264
+    STA __zpR+1
+    JSR __rt_pop2
+    JSR __rt_ge16
+    LDA __zpR
+    ORA __zpR+1
+    BNE __L67
+    JMP __L65
+__L67:
+    LDA #<0
+    STA __zpR
+    LDA #>0
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_main_v_ydir
+    LDA __zpR+1
+    STA __fn_main_v_ydir+1
+    LDA #<1
+    STA __zpR
+    LDA #>1
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_main_v_bounced
+    LDA __zpR+1
+    STA __fn_main_v_bounced+1
+    JMP __L66
+__L65:
+__L66:
+    JMP __L63
+__L62:
     LDA __fn_main_v_y
     STA __zpR
     LDA __fn_main_v_y+1
@@ -4170,17 +4219,17 @@ __L56:
     LDA __fn_main_v_y+1
     STA __zpR+1
     JSR __rt_push
-    LDA #<50
+    LDA #<85
     STA __zpR
-    LDA #>50
+    LDA #>85
     STA __zpR+1
     JSR __rt_pop2
     JSR __rt_le16
     LDA __zpR
     ORA __zpR+1
-    BNE __L64
-    JMP __L62
-__L64:
+    BNE __L70
+    JMP __L68
+__L70:
     LDA #<1
     STA __zpR
     LDA #>1
@@ -4197,10 +4246,10 @@ __L64:
     STA __fn_main_v_bounced
     LDA __zpR+1
     STA __fn_main_v_bounced+1
-    JMP __L63
-__L62:
+    JMP __L69
+__L68:
+__L69:
 __L63:
-__L57:
     JSR __fn_sprite_pos_pushframe
     LDA #<0
     STA __zpR
@@ -4234,9 +4283,9 @@ __L57:
     STA __zpR+1
     LDA __zpR
     ORA __zpR+1
-    BNE __L67
-    JMP __L65
-__L67:
+    BNE __L73
+    JMP __L71
+__L73:
     JSR __fn_sid_play_pushframe
     LDA #<0
     STA __zpR
@@ -4296,9 +4345,23 @@ __L67:
     STA __fn_sid_play_v_release+1
     JSR __fn_sid_play
     JSR __fn_sid_play_popframe
-    JMP __L66
-__L65:
-__L66:
+    JMP __L72
+__L71:
+__L72:
+    JMP __L48
+__L47:
+__L48:
+    JMP __L45
+__L44:
+    LDA #<0
+    STA __zpR
+    LDA #>0
+    STA __zpR+1
+    LDA __zpR
+    STA __fn_main_v_frame_fired
+    LDA __zpR+1
+    STA __fn_main_v_frame_fired+1
+__L45:
     JMP __L41
 __L42:
     RTS
