@@ -65,31 +65,41 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   program that returns normally after `main()` instead of looping
   forever. See `emu/ROADMAP.md`'s "Running `cc64`'s output" for the
   full bisection and fix.
+- **Reconciled the two separate `mini6502.py` copies.** `C/bin/mini6502.py`
+  used to be its own independently-maintained ~350-line 6502 emulator,
+  parallel to (and liable to disagree with) `asm/examples/mini6502.py`'s
+  more complete one — verified they actually do agree, by switching
+  `C/bin/mini6502.py` to a thin CLI wrapper around
+  `asm/examples/mini6502.py`'s `C64Machine` and re-running all thirteen
+  of `C/`'s compiler tests through it, all passing with correct output.
+  Also caught and fixed a real bug this surfaced: root `CLAUDE.md`'s own
+  documented `C/` test-suite command was invoking
+  `asm/examples/mini6502.py` directly, which has no CLI entry point at
+  all — running it produced no error and no output, a silent no-op that
+  looked like a passing test.
 
-## Open cross-project questions
-
-- **Where should a C64 standard library live?** Both subprojects have
-  their own separate list of library ideas — `asm/`'s own `lib/`
-  already has graphics/sound/input/keyboard/math/music/text/hardware
-  `.inc` files for `c64asm` programs, while `C/`'s own todo notes list
-  "expanded basic library", "graphics library", and "sound library" as
-  wanted for `cc64` programs, independently. Worth deciding whether
-  `cc64`'s standard library should wrap/reuse `asm/lib/`'s
-  already-tested routines (less duplicated logic, but couples `cc64`'s
-  library to `c64asm`-specific macro conventions) or stay independent
-  (simpler dependency story, but re-deriving already-solved problems
-  like joystick/keyboard reading a second time). Not yet decided
-  either way.
-- **Two separate `mini6502.py` copies exist** — `asm/examples/mini6502.py`
-  (actively developed: CIA keyboard/joystick emulation, zero-page
-  KERNAL poisoning, ~1300 lines) and `C/bin/mini6502.py` (a much
-  smaller, ~350-line copy, apparently untouched since `cc64`'s very
-  first two commits). `C/README.md`'s documented test loop invokes a
-  bare `mini6502.py`, which resolves to whichever copy sits next to it
-  depending on where the loop is actually run from — the two aren't
-  guaranteed to agree on what they can execute. Worth deciding whether
-  `C/`'s copy should be replaced with (or symlinked to) `asm/`'s more
-  complete one, or whether the two genuinely need to diverge.
+- **Decided: `cc64`'s standard library stays independent of `asm/lib/`** — it
+  will keep re-deriving hardware access (joystick/keyboard reading,
+  graphics/sound primitives) as ordinary `cc64` code in `C/bin/lib/`,
+  the same style `string.h`/`print.h` already use, rather than wrapping
+  `asm/lib/`'s existing `.inc` routines. Decided because wrapping isn't
+  actually available as a choice today, not just less convenient:
+  `cc64` has no inline-assembly/foreign-function-call mechanism to JSR
+  into arbitrary external assembly at all (still on `C/ROADMAP.md`'s
+  unscheduled ideas list), so calling an `asm/lib/` routine would first
+  need that whole new compiler feature built. Even with it, `asm/lib/`'s
+  routines use a raw-register calling convention and frequently require
+  the *caller* to pre-define specific zero-page pointers before
+  `.include`ing (see e.g. `input.inc`'s `word_dest_ptr` requirement) —
+  a completely different contract from `cc64`'s own per-function
+  frame-save/restore convention (`README.md`'s "How recursion works"),
+  so "wrapping" would mean a hand-written shim per routine, not a
+  generic bridge. The actual hardware facts worth reusing (e.g.
+  "joystick port 2 is active-low, shares CIA1 PRA's pins with keyboard
+  column-select") are a handful of `peek`/`poke` lines each to
+  re-express directly in `cc64`, not a large amount of logic worth the
+  cost of building a whole FFI mechanism to avoid re-deriving. See
+  `C/ROADMAP.md`'s "Standard library" section.
 
 ## Ideas without an owner yet
 

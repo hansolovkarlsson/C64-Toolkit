@@ -791,22 +791,29 @@ if this library ever grows into something bigger.
 ## Testing
 
 There's no VICE/x64 or other 6502 emulator in this environment, so
-verification here was done with a small purpose-built emulator,
-`mini6502.py`, that implements exactly the opcode/addressing-mode
-subset `cc64` emits and traps `$FFD2` (CHROUT) in software. Since a
-real zero-page collision with CHROUT/the KERNAL shipped once already
-(see "Zero-page usage" above) without this emulator catching it, it
-now also poisons the zero-page bytes CHROUT and the keyboard-scan IRQ
-are documented to touch (`$F3`-`$FA`) on every simulated CHROUT call,
-so a future regression back into that territory would show up here
-instead of only on real hardware:
+verification here was done with `mini6502.py` (`bin/mini6502.py`), a
+thin CLI wrapper around `../asm/examples/mini6502.py`'s `C64Machine` -
+the same emulator `c64asm`'s own demo tests run against, not a second,
+separately-maintained implementation (an earlier version of this file
+was its own ~350-line CPU core; see the root
+[`ROADMAP.md`](../ROADMAP.md)'s "Recently done" for why that changed).
+It traps `$FFD2` (CHROUT) in software and, since a real zero-page
+collision with CHROUT/the KERNAL shipped once already (see "Zero-page
+usage" above) without an earlier version of this harness catching it,
+also periodically poisons the zero-page bytes CHROUT and the
+keyboard-scan IRQ are documented to touch (`$F3`-`$F6`), so a future
+regression back into that territory would show up here instead of only
+on real hardware:
 
 ```sh
 python3 mini6502.py program.prg program.lst
 ```
 
-(`c64asm --listing program.lst` produces the listing it needs to find
-the real code entry point, skipping the non-executable BASIC stub.)
+(`program.lst` is accepted for backward compatibility with existing
+call sites but no longer read - the entry point is found by parsing
+the `.prg`'s own BASIC-stub `SYS` token directly, the same way
+`asm/`'s own test scripts find it, skipping the non-executable BASIC
+stub without needing a listing file at all.)
 
 `tests/features.c` is a comprehensive check covering signed
 arithmetic and truncation rules, bitwise ops and shifts, all six

@@ -46,11 +46,12 @@ first. `emu/` is unrelated to that pipeline — it's a consumer of the
 [`emu/ROADMAP.md`](emu/ROADMAP.md) track each subproject's own open
 work. Check the relevant one before assuming something is unplanned,
 already decided, or still missing — e.g. `C/ROADMAP.md` has the real
-next-language-features order for `cc64`, the root `ROADMAP.md` has the
-still-undecided question of whether `cc64`'s future standard library
-should wrap `asm/lib/` or stay independent, and `emu/ROADMAP.md` has
-`c64emu`'s staged build order (CPU -> memory -> GTK shell -> CIA ->
-VIC-II first pass -> VIC-II second pass -> SID).
+next-language-features order for `cc64` and the decision that its
+future standard library stays independent of `asm/lib/` rather than
+wrapping it (root `ROADMAP.md`'s "Recently done" has the full
+reasoning), and `emu/ROADMAP.md` has `c64emu`'s staged build order
+(CPU -> memory -> GTK shell -> CIA -> VIC-II first pass -> VIC-II
+second pass -> SID).
 
 ## Commands
 
@@ -129,7 +130,7 @@ cd C
 for f in hello features forward pointers recursion include structs; do
     ./bin/cc64 tests/$f.c -o tests/$f.asm
     ../asm/bin/c64asm tests/$f.asm -o tests/$f.prg --listing tests/$f.lst
-    python3 ../asm/examples/mini6502.py tests/$f.prg tests/$f.lst
+    python3 bin/mini6502.py tests/$f.prg tests/$f.lst
 done
 ```
 
@@ -823,20 +824,28 @@ emulation are explicitly out of scope for now.
 emulator (CIA keyboard/joystick emulation, `CHROUT`/`CHRIN` trapping,
 zero-page KERNAL-poisoning simulation) purpose-built to test-drive this
 project's own output — not a general VICE replacement, and not the
-same thing as `emu/`'s `c64emu` above. Both `asm/`'s demo tests and
-`C/`'s compiler tests run against it. It is not a substitute for
-real-hardware/VICE testing — several real bugs in this project's history
-were only caught on actual hardware and then back-ported into the
-emulator as a new simulated failure mode (e.g. the zero-page KERNAL
-poisoning above). If you fix a bug that a real device caught but
-`mini6502.py` didn't, consider whether the emulator should be taught to
-catch it too.
+same thing as `emu/`'s `c64emu` above. It has no CLI entry point of its
+own (pure library, imported by `asm/examples/test_*.py` and by
+`C/bin/mini6502.py` — see below); running it directly (`python3
+asm/examples/mini6502.py ...`) silently does nothing, a real trap that
+looks like a passing test since it produces no error either. It is not
+a substitute for real-hardware/VICE testing — several real bugs in this
+project's history were only caught on actual hardware and then
+back-ported into the emulator as a new simulated failure mode (e.g. the
+zero-page KERNAL poisoning above). If you fix a bug that a real device
+caught but `mini6502.py` didn't, consider whether the emulator should
+be taught to catch it too.
 
-Note: a second, much smaller and apparently-stale copy of this file
-also exists at `C/bin/mini6502.py` (see root `ROADMAP.md`'s "Two
-separate `mini6502.py` copies" for why this hasn't been reconciled
-yet) — check which one a command is actually resolving to before
-trusting its output.
+`C/bin/mini6502.py` is the CLI entry point `C/`'s own compiler tests
+actually invoke (`python3 bin/mini6502.py program.prg program.lst`,
+run from `C/`) — a thin wrapper that imports
+`asm/examples/mini6502.py`'s `C64Machine` rather than its own separate
+CPU implementation (it used to be one — a real, independently-
+maintained ~350-line duplicate, formerly the subject of root
+`ROADMAP.md`'s "Two separate `mini6502.py` copies" open question, now
+resolved). `program.lst` is accepted but no longer read — the entry
+point comes from `find_sys_target()` parsing the `.prg`'s own BASIC
+stub directly, the same way `asm/`'s own test scripts find it.
 
 ### VICE (manual/real-hardware verification)
 

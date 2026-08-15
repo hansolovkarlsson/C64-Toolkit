@@ -820,11 +820,12 @@ Collected in one place for reference — all of these are open items in
 ## 22. Testing this compiler
 
 There is no VICE/x64 (or other third-party 6502 emulator) dependency
-in `cc64`'s own test suite — verification is done with
-`../asm/examples/mini6502.py`, a purpose-built 6502 + C64Machine
-emulator that traps `$FFD2` (`CHROUT`) in software and simulates the
-same zero-page KERNAL-poisoning behavior described in §18, so a
-regression back into that territory shows up in testing rather than
-only on real hardware. See `../README.md`'s "Testing" section for the
-full list of `tests/*.c` files and what each one exercises, and
+in `cc64`'s own test suite — verification is done via `bin/mini6502.py`,
+a thin CLI wrapper around `../asm/examples/mini6502.py`'s C64Machine (a
+purpose-built 6502 + C64Machine emulator) that traps `$FFD2` (`CHROUT`)
+in software and simulates the same zero-page KERNAL-poisoning behavior
+described in §18, so a regression back into that territory shows up in
+testing rather than only on real hardware. See `../README.md`'s
+"Testing" section for the full list of `tests/*.c` files and what each
+one exercises, and
 `../ROADMAP.md` for open language/tooling ideas not yet scheduled.

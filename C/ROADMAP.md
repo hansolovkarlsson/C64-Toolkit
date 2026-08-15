@@ -187,7 +187,11 @@ part of this header, and needs no `#include` at all) — see
 `README.md`'s "The standard library" for the full API.
 
 Wanted, not started: an expanded "BASIC-equivalent" convenience
-library, a graphics library, a sound library. See the root
-[`../ROADMAP.md`](../ROADMAP.md)'s "Open cross-project questions" for
-the undecided question of whether these should wrap `asm/lib/`'s
-already-tested `c64asm` routines or be built independently for `cc64`.
+library, a graphics library, a sound library. These will be built as
+independent, ordinary `cc64` code (`peek`/`poke`-based, same style as
+`lib/string.h`/`lib/print.h`) rather than wrapping `asm/lib/`'s
+`c64asm` routines — see the root [`../ROADMAP.md`](../ROADMAP.md)'s
+"Recently done" for why wrapping isn't actually on the table today
+(`cc64` has no inline-assembly/foreign-function-call mechanism, and
+`asm/lib/`'s raw-register calling convention doesn't match `cc64`'s
+own anyway).
