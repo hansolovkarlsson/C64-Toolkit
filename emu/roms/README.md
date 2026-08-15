@@ -14,6 +14,15 @@ ROM chips directly). Do not ask an AI assistant working in this
 repository to find or fetch copies for you — it won't, for the same
 reason this file doesn't link to any.
 
+This holds even if the goal is to keep them purely local - a folder
+that's `.gitignore`d, never committed, never pushed anywhere. The
+concern isn't distribution via `git`; it's an AI assistant sourcing or
+handling Commodore's copyrighted binaries at all, for any purpose,
+regardless of where they'd end up sitting afterward. Downloading them
+yourself, directly, is a separate matter this file has no say over -
+just drop the three files below into this directory (already
+gitignored, see `../.gitignore`) once you have them.
+
 ## Expected files
 
 Once step 2 of `../ROADMAP.md` ("Memory map + bank switching") lands,

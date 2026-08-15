@@ -48,3 +48,48 @@ That's a real regression somewhere in the CPU/memory/CIA/VIC-II
 integration - worth checking each module's own test suite first
 (`../cpu/`, `../memory/`, `../cia/`, `../machine/`, `../vic/`) to
 narrow down which one broke, since this test alone won't say which.
+
+## Known limitations: `open-roms` BASIC completeness
+
+This gate only checks that BASIC/KERNAL initialize far enough to print
+`READY.` - it says nothing about how complete `open-roms`'s BASIC
+interpreter actually is. `open-roms` is a from-scratch, still-in-
+development reimplementation (see its own repo for current status),
+not a drop-in, feature-complete match for real Commodore BASIC 2.0.
+
+**Confirmed missing: `CHR$()`.** Typing `10 PRINT CHR$(65)` then `RUN`
+produces:
+
+```
+?NOT IMPLEMENTED ERROR IN 10
+```
+
+not a syntax error - the `CHR$` token is recognized by the tokenizer,
+but the routine behind it isn't implemented in this build (`GENERIC
+BUILD RELEASE DEV.210823.FC.1`, the version this project currently
+fetches). Other BASIC commands may have similar gaps; this hasn't been
+exhaustively tested, only surfaced when a real program needed `CHR$`.
+
+**How this was verified** (worth reusing for testing any other
+suspected gap): a throwaway harness booted to `READY.`, poked a real
+tokenized BASIC program directly into `$0801` (skipping `LOAD`, so it
+also fixed up `VARTAB`/`ARYTAB`/`STREND` - `$2D`-`$32` - to point past
+the program, the same bookkeeping a real `LOAD` would do), then
+**typed `RUN` through the real keyboard matrix** via
+`machine_set_key()` - the same mechanism `gtk/main.c` uses for actual
+keystrokes, not a shortcut that calls into BASIC internals directly.
+That matters: it means whatever result came back is exactly what a
+real keypress would have produced, not an artifact of some ROM-
+internal shortcut. Not a permanent test (nothing to assert against
+generically - what's "missing" depends entirely on what a given
+program needs), so not checked in; recreate a similar harness (see
+`../../src/machine.h`'s `machine_set_key()` and the C64 keyboard
+matrix table in `gtk/main.c`'s `c64_keymap[]`) if a future program hits
+another suspected gap and needs it confirmed the same rigorous way.
+
+**Why not just use Commodore's real ROMs instead?** See
+`../../roms/README.md` - this project (and an AI assistant working in
+it) won't fetch those, copyright, regardless of where they'd be
+stored locally. If you want to compare against real ROM behavior,
+supply your own (legally dumped from hardware you own) into
+`../../roms/` yourself - already gitignored, already documented there.

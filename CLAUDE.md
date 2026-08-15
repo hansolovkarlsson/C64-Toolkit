@@ -32,7 +32,14 @@ newer and was scaffolded directly in this repo (no subtree history).
   "`c64emu` (`emu/`)" below for why they're deliberately separate.
   **Boots real system software**: tested against the MEGA65 `open-roms`
   open-source ROM replacement, it runs unmodified to a readable BASIC
-  `READY.` prompt. Has sound now.
+  `READY.` prompt. Has sound now. `open-roms` itself is a from-scratch,
+  still-in-development BASIC/KERNAL reimplementation, not a guaranteed
+  match for every real Commodore BASIC 2.0 command — confirmed missing:
+  `CHR$()` (`?NOT IMPLEMENTED ERROR`, not a syntax error — the token is
+  recognized, the routine behind it isn't). See `emu/tests/boot/README.md`'s
+  "Known limitations" for how this was verified (typed through the real
+  keyboard matrix, not a shortcut) and `emu/roms/README.md` for why this
+  project can't just switch to Commodore's own real ROMs to sidestep it.
 
 `cc64` (`C/`) and `c64asm` (`asm/`) are developed together but built
 separately; `cc64` only ever *emits* `.asm` text, it doesn't link against

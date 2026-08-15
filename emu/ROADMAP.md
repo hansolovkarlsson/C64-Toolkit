@@ -648,9 +648,15 @@ before relying on this for anything beyond casual use).
   inspection, breakpoints, step execution) - useful once there's
   real software to debug against, not before.
 
-## Open questions
+## Known limitations
 
-- Where do `roms/`'s expected ROM images come from for someone
-  building this fresh? `roms/README.md` covers the legal answer
-  (dump your own); worth revisiting once step 2 needs concrete
-  filenames/sizes to load.
+- **`open-roms` BASIC completeness** - the ROM replacement `tests/boot/`
+  fetches (and this project develops/tests against generally) is a
+  from-scratch, still-in-development reimplementation, not a
+  guaranteed match for every real Commodore BASIC 2.0 command.
+  Confirmed missing: `CHR$()` (`?NOT IMPLEMENTED ERROR`, not a syntax
+  error - the token is recognized, the routine behind it isn't). See
+  `tests/boot/README.md`'s own "Known limitations" section for the
+  full finding and the verification technique (typed through the real
+  keyboard matrix, not a ROM-internal shortcut) - reusable if a future
+  program surfaces another suspected gap.
