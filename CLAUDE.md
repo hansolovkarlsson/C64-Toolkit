@@ -199,16 +199,22 @@ cd emu/tests/boot && make fetch && make run
 # machine_push_prg_return_trampoline() doc comment): hand-written
 # regression check, no real ROMs needed
 cd emu/tests/prg_inject && make run
+
+# Disassembler (src/disasm.c, powers the GTK debugger view's disassembly
+# pane): opcode table + all 13 addressing modes, hand-checked against
+# asm/single_src/c64disasm.py's own output for the same bytes
+cd emu/tests/disasm && make run
 ```
 
-All eight gates must pass before building on top of the module(s) they
+All nine gates must pass before building on top of the module(s) they
 cover — see `emu/tests/cpu/README.md`, `emu/tests/memory/README.md`,
 `emu/tests/cia/README.md`, `emu/tests/machine/README.md`,
 `emu/tests/vic/README.md`, `emu/tests/sid/README.md`,
-`emu/tests/boot/README.md`, and `emu/tests/prg_inject/README.md` for
-what "pass" looks like and how to re-derive the CPU suite's success
-address if a future revision of it moves. `emu/tests/boot/` is the odd
-one out among the other seven — it isn't a single module's hand-derived
+`emu/tests/boot/README.md`, `emu/tests/prg_inject/README.md`, and
+`emu/tests/disasm/README.md` for what "pass" looks like and how to
+re-derive the CPU suite's success address if a future revision of it
+moves. `emu/tests/boot/` is the odd one out among the other eight — it
+isn't a single module's hand-derived
 unit tests, it's the only gate that exercises the CPU, memory map, both
 CIAs, and VIC-II together against real third-party system software
 (SID isn't part of that gate — nothing observable in screen RAM depends
@@ -650,7 +656,37 @@ emulation are explicitly out of scope for now.
   picker to exactly the 16 real C64 colors (not arbitrary RGB) needs
   that. `<Primary>`, not `<Control>`, in every accelerator spec — the
   portable GTK alias for "the platform's real modifier key" (Cmd on
-  macOS, Ctrl elsewhere).
+  macOS, Ctrl elsewhere). Debug > Show Debugger (Cmd/Ctrl+D) opens a
+  second, persistent window — the first one in this codebase meant to
+  stay open and live-update while the machine keeps running, unlike
+  Border Color's modal dialog — showing live CPU registers, a forward
+  disassembly view from PC (`src/disasm.c`/`.h`, new: a linear,
+  single-instruction 6502/6510 decoder, deliberately NOT the same kind
+  of tool as `asm/single_src/c64disasm.py`'s whole-program flow-
+  following disassembler — a live debugger can be paused at any PC,
+  there's no "whole program" to flow-follow ahead of time, so it just
+  decodes whatever's at a given address right now; its 151-entry legal
+  opcode table is hand-transcribed from `c64asm.py`'s own `OPCODES`
+  table, and illegal/undocumented opcodes decode as `???` and still
+  advance by 1 byte rather than erroring — see `emu/tests/disasm/`,
+  the project's 9th regression gate), a 16x16-byte memory hex dump, a
+  fixed-size breakpoint list, and Step/Continue/Pause. Execution
+  control (`debug_paused`, `breakpoints[]`) lives entirely in
+  `gtk/main.c`'s `App`, not `Machine` — breakpoints/pause are a
+  debugger-UI concern, not core machine semantics, so `src/machine.h`
+  stays exactly the portable, GTK-free library it always was; `tick()`
+  just skips its `machine_step()` budget loop while paused (the screen
+  stays exactly where it was, since `vic_render_frame()` always
+  re-renders from `Machine`'s current state rather than a per-tick
+  delta) and checks `cpu.pc` against the breakpoint set after each
+  step. `machine_step()` itself needed no changes — it was already
+  instruction-granular per call (built for bad-line stalls, an
+  unrelated reason), exactly the primitive Step needs. No global
+  keyboard accelerators for Step/Continue/Pause — the main window's
+  `GtkEventControllerKey`/`c64_keymap[]` already owns most function
+  keys for real C64 keyboard passthrough, and a debugger hotkey
+  colliding with that would break real keyboard input; those three are
+  click-only buttons inside the debugger window itself.
   **Joystick**: any SDL_GameController-recognized pad (Xbox
   controllers work via SDL2's built-in mappings, no extra config)
   drives `machine_set_joystick()`'s port 2 — the port every

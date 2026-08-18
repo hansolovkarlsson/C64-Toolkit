@@ -627,6 +627,88 @@ enable/poll/hotplug path is symmetric with the audio init path already
 proven in production, but real hardware testing is still worth doing
 before relying on this for anything beyond casual use).
 
+## Debugger view
+
+~~Done~~: a real GTK4 debugger window (Debug > Show Debugger, Cmd/Ctrl+D
+- `gtk/main.c`'s `build_debugger_window()`/`debug_refresh_panel()`) -
+registers, a forward disassembly view from PC, a memory hex dump,
+breakpoints, and Step/Continue/Pause, replacing the throwaway headless
+capture harnesses this project had been rebuilding per-bug (see "Running
+`asm/`'s example programs" and "Running `cc64`'s output" above for two
+of them).
+
+- **New module: `src/disasm.h`/`disasm.c`** - a linear, single-
+  instruction 6502/6510 disassembler, deliberately NOT the same kind of
+  tool as `../asm/single_src/c64disasm.py`. That one flow-follows a
+  whole static `.prg` from an entry point to tell code apart from data;
+  this one just decodes whatever byte sequence sits at a given address
+  right now, the only thing a live debugger paused at an arbitrary PC
+  can actually do. Its opcode table (151 legal opcodes, 13 addressing
+  modes) is hand-transcribed from `c64asm.py`'s own `OPCODES` table -
+  ported values, not re-derived from a 6502 reference by hand, so it
+  can't disagree with what the assembler itself encodes. Illegal/
+  undocumented opcodes decode as `???` and still advance by 1 byte,
+  the same scope limit `c64disasm.py` documents for itself. Reads
+  through `memory_read()` - the CPU's own bank-switched view - so
+  disassembly always matches whatever's actually mapped in, the same
+  reasoning as `cpu.h`'s `CpuBus` vtable. Given its own regression gate,
+  `tests/disasm/` - see `README.md`'s "Building" section - the
+  project's **9th** correctness gate, and the only one of the nine that
+  needed no ROMs, no third-party test suite, and no GTK/SDL dependency
+  at all to verify: purely hand-derived checks against the ported
+  table, cross-checked against `c64disasm.py`'s own output for the same
+  bytes.
+- **Execution control lives in `gtk/main.c`'s `App`, not `Machine`** -
+  breakpoints and pause/step state are a debugger-UI concern, not core
+  machine semantics, so `src/machine.h` stays exactly the portable,
+  GTK-free library it always was. `tick()` (the `g_timeout_add` frame
+  loop) now checks a new `debug_paused` flag first and skips stepping
+  the machine entirely while it's set - the screen/audio just stay
+  exactly where they were, since `vic_render_frame()` always re-renders
+  from `Machine`'s current state, not a per-tick delta, so there's no
+  partial-frame corruption from stopping mid-frame this way. A
+  breakpoint hit (checked against a fixed `breakpoints[MAX_BREAKPOINTS]`
+  array after every `machine_step()` call inside the frame budget loop)
+  sets `debug_paused` and stops that frame's remaining budget short -
+  real single-instruction granularity, matching what a manual Step
+  click gives via the same `debug_do_step()` both the button and a
+  breakpoint hit ultimately call. `machine_step()` itself needed no
+  changes at all - it was already instruction-granular per call (one
+  `cpu_step()`, or a bad-line stall with `cpu_step()` skipped entirely),
+  exactly the primitive a debugger's Step needs, already built for an
+  unrelated reason (bad-line cycle stealing).
+- **The window itself** - the first persistent, live-updating second
+  top-level window in this codebase (Options > Border Color..., a modal
+  dialog destroyed on response, isn't the same kind of thing - there
+  was no precedent yet for a window meant to stay open while the
+  machine keeps running). A plain `gtk_window_new()`, transient for the
+  main window, tracked in `App.debugger_window` (NULL when closed) so
+  "Show Debugger" presents the existing instance instead of building a
+  duplicate. Register bar, a 24-instruction forward disassembly listing,
+  a 16x16-byte hex+ASCII memory dump with a goto-address entry, a
+  breakpoint list (add/remove by typing an address - simpler than a
+  per-row remove button on a `GtkListBox` for a fixed, small set), and
+  Step/Continue/Pause buttons. Deliberately **no global keyboard
+  accelerators** for Step/Continue/Pause - the main window's own
+  `GtkEventControllerKey` already owns most function keys for real C64
+  keyboard passthrough (`c64_keymap[]`), and a debugger hotkey colliding
+  with that would break real keyboard input reaching the emulated
+  machine; only "Debug > Show Debugger" itself gets an accelerator
+  (`<Primary>d`, unused until now), the buttons inside the debugger
+  window are click-only.
+- Verified: all 9 regression gates green (the boot gate's cycle count
+  unchanged at 180030 - this doesn't touch the boot path, machine
+  semantics, or `Machine` at all, only additive `App`/GTK-layer state
+  and a new standalone module), plus a live smoke test (`--prg` against
+  a real demo with real ROMs, confirming the built binary starts, loads
+  ROMs, injects the demo, and runs without crashing for several
+  seconds with the new menu entry and window wiring in place).
+  Interactive verification of Pause/Step/Continue/breakpoints
+  themselves (actually clicking through the window) needs a real
+  display and human hands on the mouse/keyboard - not something this
+  development sandbox can drive on its own the way the headless
+  cycle-accurate captures elsewhere in this file could.
+
 ## Not yet scheduled
 
 - **Light pen** - a peripheral vanishingly few pieces of C64 software
@@ -644,9 +726,6 @@ before relying on this for anything beyond casual use).
   there's a concrete piece of software that needs it.
 - **NTSC timing** - PAL timing only at first (matches this toolkit's
   existing PETSCII/hardware assumptions elsewhere).
-- A disassembler/debugger view in the GTK front end (register/memory
-  inspection, breakpoints, step execution) - useful once there's
-  real software to debug against, not before.
 
 ## Known limitations
 

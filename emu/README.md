@@ -42,8 +42,8 @@ together, not just each module in isolation (SID isn't part of this
 gate - nothing in BASIC's own boot path touches SID registers). See
 `tests/cpu/README.md`, `tests/memory/README.md`, `tests/cia/README.md`,
 `tests/machine/README.md`, `tests/vic/README.md`, `tests/sid/README.md`,
-`tests/boot/README.md`, `tests/prg_inject/README.md`, and this file's
-"Building" section below.
+`tests/boot/README.md`, `tests/prg_inject/README.md`,
+`tests/disasm/README.md`, and this file's "Building" section below.
 Joystick input works too - any SDL_GameController-recognized pad
 (Xbox controllers included) drives port 2, the port every
 joystick-aware demo in `../asm/examples/` reads. `--prg` also now
@@ -119,7 +119,13 @@ same as pressing a real C64's RESET button - it doesn't reload
 whatever was last running. **File > Quit** (Cmd/Ctrl+Q) closes the
 window and exits. **Options > Border Color...** opens a picker locked
 to the 16 real C64 colors (not arbitrary RGB) and writes straight to
-`$D020`, the same as a running program poking it itself.
+`$D020`, the same as a running program poking it itself. **Debug >
+Show Debugger** (Cmd/Ctrl+D) opens a second, persistent window with
+live registers, a forward disassembly view from PC (`src/disasm.c` -
+a linear single-instruction 6502/6510 decoder, not the flow-following
+whole-program disassembler `../asm/single_src/c64disasm.py` is), a
+memory hex dump, breakpoints, and Step/Continue/Pause - see
+`ROADMAP.md`'s "Debugger view" for the full design.
 
 The window drives the machine at ~50 Hz (PAL frame rate) and shows
 real VIC-II output - see `vic.h`'s header comment for exactly what's
@@ -160,6 +166,7 @@ cd tests/vic && make run                     # VIC-II (raster counter, text rend
 cd tests/sid && make run                     # SID (waveforms, ADSR envelopes, noise LFSR, hard sync)
 cd tests/boot && make fetch && make run      # end-to-end: real ROMs, boots to READY.
 cd tests/prg_inject && make run              # --prg SYS-injection return trampoline (see below)
+cd tests/disasm && make run                  # disassembler opcode table + addressing modes
 ```
 
 `tests/boot/` is the one gate that isn't a single module's own

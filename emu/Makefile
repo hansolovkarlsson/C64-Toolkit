@@ -9,8 +9,8 @@ PKG_CFLAGS := $(shell pkg-config --cflags gtk4 sdl2)
 PKG_LIBS := $(shell pkg-config --libs gtk4 sdl2)
 
 BIN := bin/c64emu
-SOURCES := gtk/main.c src/cpu.c src/memory.c src/cia.c src/vic.c src/sid.c src/machine.c
-HEADERS := src/cpu.h src/memory.h src/cia.h src/vic.h src/sid.h src/machine.h
+SOURCES := gtk/main.c src/cpu.c src/memory.c src/cia.c src/vic.c src/sid.c src/machine.c src/disasm.c
+HEADERS := src/cpu.h src/memory.h src/cia.h src/vic.h src/sid.h src/machine.h src/disasm.h
 
 .PHONY: all clean
 

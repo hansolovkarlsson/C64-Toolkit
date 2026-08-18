@@ -57,8 +57,12 @@
  * - a real, working quit; macOS gives an unbundled binary like this
  * one its own generic system app menu too, but that one's stub "Quit"
  * entry isn't wired to anything by GTK's quartz backend, hence a real
- * one here), and Options > Border Color... (a picker locked to the 16
- * real C64 colors, see action_border_color()). <Primary> rather than
+ * one here), Options > Border Color... (a picker locked to the 16
+ * real C64 colors, see action_border_color()), and Debug > Show
+ * Debugger (Cmd/Ctrl+D - a persistent, live-updating second window:
+ * registers, a forward disassembly view from PC, a memory hex dump,
+ * breakpoints, and Step/Continue/Pause - see build_debugger_window()/
+ * debug_refresh_panel() and ../src/disasm.h). <Primary> rather than
  * <Control> in the accelerator specs throughout - the portable GTK
  * alias that resolves to Cmd on macOS, not the literal Control key.
  */
@@ -69,6 +73,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../src/machine.h"
+#include "../src/disasm.h"
 
 /* PAL C64: ~985248 Hz CPU clock, ~50.12 Hz frame rate -> 19656
  * cycles/frame (PAL_CYCLES_PER_LINE * PAL_LINES_PER_FRAME, see
@@ -91,6 +96,12 @@
  * treat a light stick tilt as a "soft" press when the machine only
  * understands on/off anyway. */
 #define JOYSTICK_AXIS_THRESHOLD 16000
+
+/* Fixed-size breakpoint set for the debugger view (see App's own
+ * breakpoints field below) - plenty for manual debugging, and a fixed
+ * array avoids pulling in a growable-container type for something
+ * this small, matching this toolkit's usual style. */
+#define MAX_BREAKPOINTS 16
 
 /* Audio output (../ROADMAP.md step 7's last piece): SID itself (see
  * sid.h) has no notion of a sample rate - sid_tick() already advances
@@ -210,6 +221,23 @@ typedef struct {
      * Open PRG..., Reset, Options > Border Color... - see activate())
      * have something to parent their dialogs to. */
     GtkWidget *window;
+
+    /* Debugger view (Debug > Show Debugger - see build_debugger_window()/
+     * debug_refresh_panel() below): registers, a forward disassembly
+     * view from PC, a memory hex dump, breakpoints, and Step/Continue/
+     * Pause. debug_paused gates tick()'s own stepping loop - see
+     * tick()'s comment. debugger_window is NULL whenever the window
+     * isn't open (checked before every refresh, so nothing here needs
+     * to happen while it's closed); the widget fields below are only
+     * ever set once, in build_debugger_window(), and only read/written
+     * by debug_refresh_panel() and the debugger's own button callbacks. */
+    int debug_paused;
+    uint16_t breakpoints[MAX_BREAKPOINTS];
+    int breakpoint_count;
+    uint16_t mem_view_addr; /* current goto-address for the memory hex view */
+    GtkWidget *debugger_window;
+    GtkWidget *reg_label, *disasm_view, *mem_view, *breakpoint_list;
+    GtkWidget *mem_addr_entry, *bp_entry;
 } App;
 
 /* GDK keyval -> C64 keyboard matrix (pa_bit selects the column CIA1's
@@ -510,8 +538,25 @@ static void poll_joystick(App *app) {
     machine_set_joystick(&app->machine, 2, (uint8_t)~pressed);
 }
 
+/* Forward declarations - both are defined down in the debugger-view
+ * block (after action_border_color(), before activate()), but tick()
+ * needs to call them and is defined earlier in the file. */
+static int debug_is_breakpoint(App *app, uint16_t pc);
+static void debug_refresh_panel(App *app);
+
 static gboolean tick(gpointer user_data) {
     App *app = user_data;
+
+    /* Paused for the debugger view: skip stepping the machine entirely
+     * for this timer call. The screen/audio just stay exactly where
+     * they were - vic_render_frame() always re-renders from Machine's
+     * current state, not from a per-tick delta, so there's no partial-
+     * frame corruption from stopping mid-frame like this. */
+    if (app->debug_paused) {
+        gtk_widget_queue_draw(app->drawing_area);
+        return G_SOURCE_CONTINUE;
+    }
+
     try_inject_prg(app);
     poll_joystick(app);
 
@@ -559,6 +604,16 @@ static gboolean tick(gpointer user_data) {
                 SDL_UnlockAudioDevice(app->audio_dev);
             }
         }
+
+        /* A breakpoint hit stops the whole frame's remaining budget
+         * short, not just this one iteration - real single-instruction
+         * granularity, the same thing a manual Step click gives via
+         * debug_do_step() below. */
+        if (debug_is_breakpoint(app, app->machine.cpu.pc)) {
+            app->debug_paused = 1;
+            debug_refresh_panel(app);
+            break;
+        }
     }
 
     gtk_widget_queue_draw(app->drawing_area);
@@ -599,6 +654,14 @@ static void on_window_destroy(GtkWidget *window, gpointer user_data) {
     if (app->timeout_id) {
         g_source_remove(app->timeout_id);
         app->timeout_id = 0;
+    }
+    /* The debugger window is a separate top-level (see
+     * build_debugger_window()), not registered with GtkApplication, so
+     * closing the main window wouldn't otherwise take it down too -
+     * its own "destroy" handler (on_debugger_window_destroy()) NULLs
+     * app->debugger_window back out. */
+    if (app->debugger_window) {
+        gtk_window_destroy(GTK_WINDOW(app->debugger_window));
     }
 }
 
@@ -768,6 +831,293 @@ static void action_border_color(GSimpleAction *action, GVariant *parameter, gpoi
     gtk_window_present(GTK_WINDOW(dialog));
 }
 
+/* Debug > Show Debugger - the first persistent, live-updating second
+ * top-level window in this codebase (Options > Border Color..., above,
+ * is a modal dialog destroyed on response, not something that stays
+ * open while the machine keeps running). See ../src/disasm.h for the
+ * disassembler this drives. */
+
+static int debug_is_breakpoint(App *app, uint16_t pc) {
+    for (int i = 0; i < app->breakpoint_count; i++) {
+        if (app->breakpoints[i] == pc) return 1;
+    }
+    return 0;
+}
+
+/* Redraws every widget in the debugger window from Machine's current
+ * state - called after every step, breakpoint hit, and pause, and
+ * whenever the window is first opened. A no-op if the window isn't
+ * open (app->debugger_window == NULL), so callers never need to check
+ * that themselves first. */
+static void debug_refresh_panel(App *app) {
+    if (!app->debugger_window) return;
+
+    Cpu6502 *cpu = &app->machine.cpu;
+    char reg_text[128];
+    snprintf(reg_text, sizeof reg_text,
+             "A:$%02X  X:$%02X  Y:$%02X  SP:$%02X  PC:$%04X  P:%c%c-%c%c%c%c%c",
+             cpu->a, cpu->x, cpu->y, cpu->sp, cpu->pc,
+             (cpu->p & FLAG_N) ? 'N' : '-', (cpu->p & FLAG_V) ? 'V' : '-',
+             (cpu->p & FLAG_B) ? 'B' : '-', (cpu->p & FLAG_D) ? 'D' : '-',
+             (cpu->p & FLAG_I) ? 'I' : '-', (cpu->p & FLAG_Z) ? 'Z' : '-',
+             (cpu->p & FLAG_C) ? 'C' : '-');
+    gtk_label_set_text(GTK_LABEL(app->reg_label), reg_text);
+
+    /* Disassembly: forward from PC only - see disasm.h's header
+     * comment for why walking backward isn't attempted (unreliable for
+     * variable-length 6502 instructions without full flow analysis). */
+    GString *disasm_text = g_string_new(NULL);
+    uint16_t addr = cpu->pc;
+    for (int i = 0; i < 24; i++) {
+        char line[64];
+        int len = disasm_one(&app->machine.mem, addr, line, sizeof line);
+        g_string_append(disasm_text, line);
+        g_string_append_c(disasm_text, '\n');
+        addr = (uint16_t)(addr + len);
+    }
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(app->disasm_view)), disasm_text->str, -1);
+    g_string_free(disasm_text, TRUE);
+
+    /* Memory hex view: 16 rows x 16 bytes from mem_view_addr, read
+     * through memory_read() - the CPU's own bank-switched view, same
+     * reasoning as disasm_one() itself. */
+    GString *mem_text = g_string_new(NULL);
+    for (int row = 0; row < 16; row++) {
+        uint16_t base = (uint16_t)(app->mem_view_addr + row * 16);
+        uint8_t bytes[16];
+        g_string_append_printf(mem_text, "$%04X:", base);
+        for (int col = 0; col < 16; col++) {
+            bytes[col] = memory_read(&app->machine.mem, (uint16_t)(base + col));
+            g_string_append_printf(mem_text, " %02X", bytes[col]);
+        }
+        g_string_append(mem_text, "  ");
+        for (int col = 0; col < 16; col++) {
+            uint8_t b = bytes[col];
+            g_string_append_c(mem_text, (b >= 0x20 && b < 0x7F) ? (char)b : '.');
+        }
+        g_string_append_c(mem_text, '\n');
+    }
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(app->mem_view)), mem_text->str, -1);
+    g_string_free(mem_text, TRUE);
+
+    GString *bp_text = g_string_new(NULL);
+    for (int i = 0; i < app->breakpoint_count; i++) {
+        g_string_append_printf(bp_text, "$%04X\n", app->breakpoints[i]);
+    }
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(app->breakpoint_list)), bp_text->str, -1);
+    g_string_free(bp_text, TRUE);
+}
+
+/* Shared by both the GAction versions (menu-driven - not used for
+ * these three, see build_debugger_window()'s own comment on why they
+ * stay button-only) and the debugger window's own button "clicked"
+ * handlers below, so the actual behavior lives in exactly one place. */
+static void debug_do_step(App *app) {
+    machine_step(&app->machine);
+    app->debug_paused = 1; /* stepping always leaves/keeps the machine paused */
+    debug_refresh_panel(app);
+    gtk_widget_queue_draw(app->drawing_area);
+}
+
+static void debug_do_continue(App *app) {
+    app->debug_paused = 0; /* tick() resumes its normal budget loop next timer call */
+}
+
+static void debug_do_pause(App *app) {
+    app->debug_paused = 1;
+    debug_refresh_panel(app);
+}
+
+static void on_step_clicked(GtkButton *button, gpointer user_data) {
+    (void)button;
+    debug_do_step((App *)user_data);
+}
+
+static void on_continue_clicked(GtkButton *button, gpointer user_data) {
+    (void)button;
+    debug_do_continue((App *)user_data);
+}
+
+static void on_pause_clicked(GtkButton *button, gpointer user_data) {
+    (void)button;
+    debug_do_pause((App *)user_data);
+}
+
+/* Address entries accept an optional leading '$' (matching this
+ * project's own hex-literal convention everywhere else) or a bare hex
+ * string either way - strtoul's endptr check is what actually decides
+ * whether anything was parsed, an empty/non-hex entry is just ignored. */
+static uint16_t parse_hex_entry(GtkWidget *entry, int *ok) {
+    const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+    if (text[0] == '$') text++;
+    char *endptr;
+    unsigned long val = strtoul(text, &endptr, 16);
+    *ok = (endptr != text);
+    return (uint16_t)val;
+}
+
+static void on_mem_goto_clicked(GtkButton *button, gpointer user_data) {
+    (void)button;
+    App *app = user_data;
+    int ok;
+    uint16_t addr = parse_hex_entry(app->mem_addr_entry, &ok);
+    if (!ok) return;
+    app->mem_view_addr = addr;
+    debug_refresh_panel(app);
+}
+
+static void on_breakpoint_add_clicked(GtkButton *button, gpointer user_data) {
+    (void)button;
+    App *app = user_data;
+    int ok;
+    uint16_t addr = parse_hex_entry(app->bp_entry, &ok);
+    if (!ok) return;
+    if (debug_is_breakpoint(app, addr)) return; /* already set */
+    if (app->breakpoint_count < MAX_BREAKPOINTS) {
+        app->breakpoints[app->breakpoint_count++] = addr;
+    }
+    debug_refresh_panel(app);
+}
+
+static void on_breakpoint_remove_clicked(GtkButton *button, gpointer user_data) {
+    (void)button;
+    App *app = user_data;
+    int ok;
+    uint16_t addr = parse_hex_entry(app->bp_entry, &ok);
+    if (!ok) return;
+    for (int i = 0; i < app->breakpoint_count; i++) {
+        if (app->breakpoints[i] == addr) {
+            for (int j = i; j < app->breakpoint_count - 1; j++) {
+                app->breakpoints[j] = app->breakpoints[j + 1];
+            }
+            app->breakpoint_count--;
+            break;
+        }
+    }
+    debug_refresh_panel(app);
+}
+
+/* No "destroy" cleanup beyond this needed for the widget fields
+ * (reg_label/disasm_view/etc.) - GTK destroys the whole child widget
+ * tree along with the window itself; the only thing that outlives it
+ * is app->debugger_window, which this NULLs back out so action_show_
+ * debugger() knows to build a fresh one next time rather than present()
+ * a destroyed widget. */
+static void on_debugger_window_destroy(GtkWidget *window, gpointer user_data) {
+    (void)window;
+    App *app = user_data;
+    app->debugger_window = NULL;
+}
+
+static void build_debugger_window(App *app) {
+    GtkWidget *window = gtk_window_new();
+    app->debugger_window = window;
+    gtk_window_set_title(GTK_WINDOW(window), "Debugger");
+    gtk_window_set_transient_for(GTK_WINDOW(window), GTK_WINDOW(app->window));
+    gtk_window_set_default_size(GTK_WINDOW(window), 440, 620);
+
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_margin_start(box, 8);
+    gtk_widget_set_margin_end(box, 8);
+    gtk_widget_set_margin_top(box, 8);
+    gtk_widget_set_margin_bottom(box, 8);
+    gtk_window_set_child(GTK_WINDOW(window), box);
+
+    app->reg_label = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(app->reg_label), 0.0);
+    gtk_widget_add_css_class(app->reg_label, "monospace");
+    gtk_box_append(GTK_BOX(box), app->reg_label);
+
+    /* Step/Continue/Pause are buttons only here, not also win.* menu
+     * actions with global accelerators the way Open PRG/Reset/Quit are
+     * - the main window's own GtkEventControllerKey already owns most
+     * function keys for real C64 keyboard passthrough (c64_keymap[]
+     * above), and a debugger hotkey colliding with that would break
+     * real keyboard input reaching the emulated machine. */
+    GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *step_btn = gtk_button_new_with_label("Step");
+    GtkWidget *continue_btn = gtk_button_new_with_label("Continue");
+    GtkWidget *pause_btn = gtk_button_new_with_label("Pause");
+    g_signal_connect(step_btn, "clicked", G_CALLBACK(on_step_clicked), app);
+    g_signal_connect(continue_btn, "clicked", G_CALLBACK(on_continue_clicked), app);
+    g_signal_connect(pause_btn, "clicked", G_CALLBACK(on_pause_clicked), app);
+    gtk_box_append(GTK_BOX(controls), step_btn);
+    gtk_box_append(GTK_BOX(controls), continue_btn);
+    gtk_box_append(GTK_BOX(controls), pause_btn);
+    gtk_box_append(GTK_BOX(box), controls);
+
+    GtkWidget *disasm_label = gtk_label_new("Disassembly (forward from PC)");
+    gtk_label_set_xalign(GTK_LABEL(disasm_label), 0.0);
+    gtk_box_append(GTK_BOX(box), disasm_label);
+    app->disasm_view = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(app->disasm_view), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(app->disasm_view), TRUE);
+    GtkWidget *disasm_scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(disasm_scroll), app->disasm_view);
+    gtk_widget_set_size_request(disasm_scroll, -1, 200);
+    gtk_box_append(GTK_BOX(box), disasm_scroll);
+
+    GtkWidget *mem_controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *mem_label = gtk_label_new("Address:");
+    app->mem_addr_entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app->mem_addr_entry), "$0400");
+    GtkWidget *goto_btn = gtk_button_new_with_label("Go");
+    g_signal_connect(goto_btn, "clicked", G_CALLBACK(on_mem_goto_clicked), app);
+    gtk_box_append(GTK_BOX(mem_controls), mem_label);
+    gtk_box_append(GTK_BOX(mem_controls), app->mem_addr_entry);
+    gtk_box_append(GTK_BOX(mem_controls), goto_btn);
+    gtk_box_append(GTK_BOX(box), mem_controls);
+
+    app->mem_view = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(app->mem_view), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(app->mem_view), TRUE);
+    GtkWidget *mem_scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(mem_scroll), app->mem_view);
+    gtk_widget_set_size_request(mem_scroll, -1, 200);
+    gtk_box_append(GTK_BOX(box), mem_scroll);
+
+    /* Breakpoint add/remove both read the SAME entry - type an address
+     * and click Add to set it, or Remove to clear it. Simpler than a
+     * per-row remove button on a GtkListBox for a fixed, small
+     * breakpoint set, at the cost of not being able to remove one
+     * without retyping its address - an accepted trade-off, not an
+     * oversight. */
+    GtkWidget *bp_controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    app->bp_entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app->bp_entry), "$C000");
+    GtkWidget *bp_add_btn = gtk_button_new_with_label("Add");
+    GtkWidget *bp_remove_btn = gtk_button_new_with_label("Remove");
+    g_signal_connect(bp_add_btn, "clicked", G_CALLBACK(on_breakpoint_add_clicked), app);
+    g_signal_connect(bp_remove_btn, "clicked", G_CALLBACK(on_breakpoint_remove_clicked), app);
+    gtk_box_append(GTK_BOX(bp_controls), app->bp_entry);
+    gtk_box_append(GTK_BOX(bp_controls), bp_add_btn);
+    gtk_box_append(GTK_BOX(bp_controls), bp_remove_btn);
+    gtk_box_append(GTK_BOX(box), bp_controls);
+
+    app->breakpoint_list = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(app->breakpoint_list), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(app->breakpoint_list), TRUE);
+    GtkWidget *bp_scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(bp_scroll), app->breakpoint_list);
+    gtk_widget_set_size_request(bp_scroll, -1, 90);
+    gtk_box_append(GTK_BOX(box), bp_scroll);
+
+    g_signal_connect(window, "destroy", G_CALLBACK(on_debugger_window_destroy), app);
+}
+
+static void action_show_debugger(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
+    App *app = user_data;
+    if (app->debugger_window) {
+        gtk_window_present(GTK_WINDOW(app->debugger_window));
+        return;
+    }
+    build_debugger_window(app);
+    debug_refresh_panel(app);
+    gtk_window_present(GTK_WINDOW(app->debugger_window));
+}
+
 static void activate(GtkApplication *gtk_app, gpointer user_data) {
     App *app = user_data;
 
@@ -784,6 +1134,7 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
         {"reset", action_reset, NULL, NULL, NULL, {0}},
         {"quit", action_quit, NULL, NULL, NULL, {0}},
         {"border-color", action_border_color, NULL, NULL, NULL, {0}},
+        {"show-debugger", action_show_debugger, NULL, NULL, NULL, {0}},
     };
     g_action_map_add_action_entries(G_ACTION_MAP(window), win_actions, G_N_ELEMENTS(win_actions), app);
 
@@ -805,6 +1156,10 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
     g_menu_append(options_menu, "Border Color…", "win.border-color");
     g_menu_append_submenu(menu_bar, "Options", G_MENU_MODEL(options_menu));
     g_object_unref(options_menu);
+    GMenu *debug_menu = g_menu_new();
+    g_menu_append(debug_menu, "Show Debugger", "win.show-debugger");
+    g_menu_append_submenu(menu_bar, "Debug", G_MENU_MODEL(debug_menu));
+    g_object_unref(debug_menu);
     gtk_application_set_menubar(gtk_app, G_MENU_MODEL(menu_bar));
     g_object_unref(menu_bar);
     gtk_application_window_set_show_menubar(GTK_APPLICATION_WINDOW(window), TRUE);
@@ -820,6 +1175,8 @@ static void activate(GtkApplication *gtk_app, gpointer user_data) {
     gtk_application_set_accels_for_action(gtk_app, "win.reset", reset_accels);
     const char *quit_accels[] = {"<Primary>q", NULL};
     gtk_application_set_accels_for_action(gtk_app, "win.quit", quit_accels);
+    const char *debugger_accels[] = {"<Primary>d", NULL};
+    gtk_application_set_accels_for_action(gtk_app, "win.show-debugger", debugger_accels);
 
     /* The native VIC_CANVAS_W x VIC_CANVAS_H resolution (~403x284) is
      * tiny on a modern display, so the window opens at a readable
