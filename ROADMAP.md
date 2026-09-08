@@ -22,26 +22,10 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   Someone arriving at the repo has no way to reach `c64emu` from the
   front door, and both roadmaps' framing tells a reader they've opened
   the wrong file.
-- **None of the documented ways to run this toolkit's tests actually
-  run them.** Four instances, one shared shape: a runner that reports
-  success without having checked anything.
-  - `asm/`'s `make test` pipes every example `.prg` to `python3
-    examples/mini6502.py`, which has no CLI entry point, so all 16
-    produce no output and no error. This is the exact silent-no-op trap
-    "Recently done" below records finding and fixing in `CLAUDE.md`'s
-    `C/` command; `asm/Makefile`'s own copy was never checked. The
-    recipe also puts `@echo` inside its shell loop, printing
-    `/bin/sh: @echo: command not found` 16 times.
-  - `asm/examples/test_*.py`, the real per-demo suite, can't be run the
-    way `CLAUDE.md` documents (`cd asm/examples && python3
-    test_pong.py`): 15 of the 16 scripts fail, 14 of them with
-    "c64asm.py not found" because they look for `c64asm.py` in the
-    current directory or at `/mnt/user-data/outputs/c64asm.py`, never
-    at `../single_src/`. Copied into a flat directory beside
-    `c64asm.py` they pass, 15 scripts and 699 assertions, so only the
-    file lookup is wrong, not the tests. `test_c64machine.py` is the
-    exception: it hardcodes that same absolute sandbox path with no
-    fallback and fails everywhere.
+- **Two of the documented ways to run this toolkit's tests still do not
+  run them.** One shared shape: a runner that reports success without
+  having checked anything. Both remaining instances are in `C/`; the two
+  in `asm/` are fixed, see "Recently done" below.
   - `C/`'s documented test loop cannot fail. `C/bin/mini6502.py` prints
     the program's output and exits 0 whether it returned cleanly or
     halted on a BRK, and nothing compares that output against an
@@ -52,10 +36,12 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
     `CLAUDE.md`'s documented `./build.sh tests/hello.c` double-prefixes
     to `./tests/tests/hello.c`, since the script adds `tests/` itself.
 
-  Together these mean `asm/`'s standard library and its 16 demos have no
-  correctness net that a person running the documented commands would
-  notice was missing, the same failure mode that let the `C/` instance
-  survive until it was found by accident.
+  Both leave `cc64` without a correctness net that a person running the
+  documented commands would notice was missing. Worth keeping in mind
+  while fixing them: the two `asm/` instances were found by running the
+  documented command and watching what it actually did, not by reading
+  it, and the third defect behind them (the library path) only surfaced
+  once the first two were out of the way.
 
 ## Recently done
 
@@ -184,6 +170,28 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   on each bounce - not run through `mini6502.py`'s clean-return check,
   since (like every game/demo in this project) it loops forever by
   design. Also spot-checked live against `c64emu` with real ROMs.
+- **`asm/`'s test suite actually runs now.** `make test` had been piping
+  every built `.prg` into `examples/mini6502.py`, which has no CLI entry
+  point, so all 16 produced no output, no error and a zero exit: the
+  suite reported success having run nothing at all. It now runs
+  `examples/test_*.py`, the real per-demo suite, and exits nonzero when
+  any script fails, or when the glob matches nothing, since a suite that
+  finds no tests must fail rather than pass quietly. Making that work
+  meant fixing the scripts too, and there turned out to be three defects
+  stacked rather than one. 15 of the 16 looked for `c64asm.py` in the
+  current directory or at a `/mnt/user-data/outputs/` path left over
+  from a sandbox, so they could not run from `asm/examples/` the way
+  `CLAUDE.md` documents. With that fixed, the demos' `.include
+  "lib/..."` still failed, because `asm/lib/` is one level above
+  `examples/` and nine scripts carried a trailing `--lib-dir .` that
+  argparse let win over anything passed earlier. No sandbox path remains
+  anywhere in the tree. `make test` now reports 16 scripts and 712
+  assertions, and was checked against three deliberate breakages, an
+  empty test directory, a corrupted `pong.asm`, and a false assertion,
+  to confirm it fails when it should. Two claims in `CLAUDE.md` that
+  this disproved were corrected with it: `make test` no longer runs
+  `.prg` files through the harness, and a demo's `.prg` never needed
+  building first, since each script assembles its own `.asm`.
 
 ## Ideas without an owner yet
 
