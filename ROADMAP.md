@@ -16,7 +16,9 @@ work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
   only their two `make` lines, and `CLAUDE.md` is described there as "a
   denser map of both". This file's own opening note and link list have
   the same gap, and `emu/ROADMAP.md` still opens with "Nothing here is
-  implemented yet" although all seven of its build-order steps are done.
+  implemented yet" although six of its seven build-order steps are
+  struck through as done and the seventh, SID, is all but the analog
+  filter.
   Someone arriving at the repo has no way to reach `c64emu` from the
   front door, and both roadmaps' framing tells a reader they've opened
   the wrong file.
