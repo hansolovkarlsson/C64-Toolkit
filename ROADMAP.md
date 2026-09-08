@@ -6,6 +6,55 @@ together. Each subproject keeps its own more detailed roadmap for
 work scoped to just that one: [`asm/ROADMAP.md`](asm/ROADMAP.md) and
 [`C/ROADMAP.md`](C/ROADMAP.md).
 
+## Open
+
+- **The toolkit's own records still describe a two-project repo.**
+  `emu/` (`c64emu`) has been a third subproject since 2026-08-05 and is
+  now the most active one, but root `README.md` doesn't mention it at
+  all: its opening line calls this "a 6502/6510 assembler and a small C
+  compiler", "What's here" lists only `asm/` and `C/`, "Building" gives
+  only their two `make` lines, and `CLAUDE.md` is described there as "a
+  denser map of both". This file's own opening note and link list have
+  the same gap, and `emu/ROADMAP.md` still opens with "Nothing here is
+  implemented yet" although all seven of its build-order steps are done.
+  Someone arriving at the repo has no way to reach `c64emu` from the
+  front door, and both roadmaps' framing tells a reader they've opened
+  the wrong file.
+- **None of the documented ways to run this toolkit's tests actually
+  run them.** Four instances, one shared shape: a runner that reports
+  success without having checked anything.
+  - `asm/`'s `make test` pipes every example `.prg` to `python3
+    examples/mini6502.py`, which has no CLI entry point, so all 16
+    produce no output and no error. This is the exact silent-no-op trap
+    "Recently done" below records finding and fixing in `CLAUDE.md`'s
+    `C/` command; `asm/Makefile`'s own copy was never checked. The
+    recipe also puts `@echo` inside its shell loop, printing
+    `/bin/sh: @echo: command not found` 16 times.
+  - `asm/examples/test_*.py`, the real per-demo suite, can't be run the
+    way `CLAUDE.md` documents (`cd asm/examples && python3
+    test_pong.py`): 15 of the 16 scripts fail, 14 of them with
+    "c64asm.py not found" because they look for `c64asm.py` in the
+    current directory or at `/mnt/user-data/outputs/c64asm.py`, never
+    at `../single_src/`. Copied into a flat directory beside
+    `c64asm.py` they pass, 15 scripts and 699 assertions, so only the
+    file lookup is wrong, not the tests. `test_c64machine.py` is the
+    exception: it hardcodes that same absolute sandbox path with no
+    fallback and fails everywhere.
+  - `C/`'s documented test loop cannot fail. `C/bin/mini6502.py` prints
+    the program's output and exits 0 whether it returned cleanly or
+    halted on a BRK, and nothing compares that output against an
+    expected result, so a codegen bug printing 41 instead of 42 would
+    still read as a pass.
+  - `C/build.sh` can't assemble. It looks for `c64asm` in `C/bin/`,
+    where it has never been built (it lives at `asm/bin/c64asm`), and
+    `CLAUDE.md`'s documented `./build.sh tests/hello.c` double-prefixes
+    to `./tests/tests/hello.c`, since the script adds `tests/` itself.
+
+  Together these mean `asm/`'s standard library and its 16 demos have no
+  correctness net that a person running the documented commands would
+  notice was missing, the same failure mode that let the `C/` instance
+  survive until it was found by accident.
+
 ## Recently done
 
 - **Merged `asm/` and `C/` into one repository** (this one), via
