@@ -203,3 +203,18 @@ Still wanted, not started: an expanded "BASIC-equivalent" convenience
 library (typed-line input, a few common KERNAL wrappers) - see
 `asm/lib/input.inc`/`text.inc` for the kind of thing this would cover,
 re-derived rather than wrapped for the same reason above.
+
+Known defects in `lib/sound.h`, both found by audit rather than by a
+failing test, and both invisible to `tests/sound.c` as written.
+`sid_volume()` pokes the whole of `$D418` even though its comment says
+it "only ever touches the low nibble", so it silently clears the filter
+mode and voice-3-off bits in the high nibble - `lib/graphics.h` does
+proper read-modify-write in all six places it needs to, and this is the
+one that doesn't. `sid_silence()` zeroes the entire control register, so
+its comment's claim that the waveform bits "don't matter once gate is
+off" is wrong: the release phase's output is waveform times envelope, so
+clearing them cuts the release tail to silence instead of letting it
+ring out, which `emu/`'s own SID model shows too
+(`compute_voice_waveform()` returns 0 when no waveform bit is set).
+`tests/sound.c` only reads back the value it wrote, so neither is
+caught.

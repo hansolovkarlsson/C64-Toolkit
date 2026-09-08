@@ -740,6 +740,25 @@ of them).
   keyboard matrix, not a ROM-internal shortcut) - reusable if a future
   program surfaces another suspected gap.
 
+- **The debugger's memory pane reads I/O registers with side effects** -
+  `debug_refresh_panel()` (`gtk/main.c`) reads 16x16 bytes from
+  `mem_view_addr` through `memory_read()`, the CPU's own bank-switched
+  view, and some of those reads are not passive: `cia_read()` on ICR
+  zeroes `icr_pending` and de-asserts the IRQ line, and `vic_read()` on
+  `$D01E`/`$D01F` clears the collision registers. Point the pane at
+  `$DC00` while the machine is running (Goto, or adding/removing a
+  breakpoint, both refresh without pausing) and a program can lose a
+  pending timer or raster interrupt, so opening the debugger changes
+  what it is observing. The forward disassembly pane has the same
+  exposure from PC, though a PC inside `$D000`-`$DFFF` is far-fetched.
+  Wants a passive read path for the debugger to use instead. Found by
+  reading the code, not reproduced in a running window.
+- **`machine_reset()` resets only the CPU** - it calls `cpu_reset()` and
+  nothing else, so File > Reset leaves CIA timers/ICR, VIC and SID state
+  exactly as the previous program left them. Real `/RESET` reaches those
+  chips too. Mostly masked today because KERNAL's own startup reprograms
+  them, which is why nothing has noticed.
+
 ## Verified against real Commodore ROMs too
 
 Not just `open-roms`: confirmed booting successfully against real
