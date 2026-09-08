@@ -7,7 +7,6 @@ and control flow.
 """
 
 import sys
-sys.path.insert(0, '/home/claude/emu_dev')
 from mini6502 import CPU6502, FLAG_C, FLAG_Z, FLAG_N, FLAG_V
 
 passed = 0

@@ -92,7 +92,8 @@ python3 single_src/c64asm.py input.asm -o output.prg [--listing out.lst] [--lib-
 # Build every example demo to .prg (also builds bin/c64asm first)
 make examples
 
-# Run every example .prg through the mini6502 test harness
+# Run the per-demo regression suite (examples/test_*.py) - each drives its
+# demo through mini6502.py end to end. Needs no prior `make examples`.
 make test
 
 # Disassemble a .prg back to c64asm-compatible source
@@ -117,9 +118,10 @@ python3 test_pong.py
 These play the actual game/demo logic through programmatically (full
 win-condition paths, simulated keyboard/joystick input) rather than just
 checking that assembly succeeded — this is the primary correctness net
-for the standard library and every demo. A demo's `.prg` must be built
-(`make examples` from `asm/`, or the direct assemble command above)
-before its test can run against it.
+for the standard library and every demo. Each script assembles its own
+`.asm` through `single_src/c64asm.py`, so no prior `make examples` and no
+built `bin/c64asm` is needed; `make test` from `asm/` runs all of them and
+fails on the first script that fails.
 
 **Two-way parity** is a hard invariant for this project: Python and
 split-source C must produce byte-identical `.prg` and `--listing`

@@ -1,5 +1,5 @@
+import os
 import sys
-sys.path.insert(0, '/home/claude/emu_dev')
 from mini6502 import C64Machine, CPU6502
 
 passed = 0
@@ -106,8 +106,11 @@ check("a byte OUTSIDE the poisoned range is left alone",
 print()
 print("=== .basic SYS-target parsing ===")
 import subprocess
-result = subprocess.run(['python3', '/mnt/user-data/outputs/c64asm.py',
-                          '/home/claude/c64asm/hello.asm', '-o', '/tmp/mini6502_hello.prg'],
+_here = os.path.dirname(os.path.abspath(__file__))
+result = subprocess.run(['python3',
+                          os.path.join(_here, os.pardir, 'single_src', 'c64asm.py'),
+                          os.path.join(_here, 'hello.asm'),
+                          '-o', '/tmp/mini6502_hello.prg'],
                          capture_output=True, text=True)
 check("hello.asm assembled for this test", result.returncode == 0, result.stderr)
 with open('/tmp/mini6502_hello.prg', 'rb') as f:

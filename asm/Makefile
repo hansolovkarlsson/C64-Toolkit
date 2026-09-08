@@ -69,11 +69,34 @@ clean_examples:
 # 	done
 
 
-test: 
-	@for file in $(EXA_PRG); do \
-		@echo "*** TESTING $$file ***"; \
-		python3 $(EXA_DIR)/mini6502.py "$$file"; \
-	done
+# The real regression suite is examples/test_*.py: each drives its demo
+# through mini6502.py end to end (win conditions, simulated keyboard and
+# joystick input), rather than only checking that it assembles. They
+# assemble their own .asm via single_src/c64asm.py, so this target needs
+# no prior `make examples` and no built bin/c64asm.
+#
+# mini6502.py is a library with no CLI entry point. An earlier version of
+# this target piped every built .prg into it directly, which produced no
+# output, no error and a zero exit, so `make test` reported success while
+# running nothing at all. The empty-glob guard below exists for the same
+# reason: a suite that finds no tests must fail, not pass quietly.
+test:
+	@cd $(EXA_DIR) && failed=0; total=0; \
+	for t in test_*.py; do \
+		[ -e "$$t" ] || continue; \
+		total=$$((total + 1)); \
+		printf '*** %s ***\n' "$$t"; \
+		python3 "$$t" || failed=$$((failed + 1)); \
+	done; \
+	if [ $$total -eq 0 ]; then \
+		echo "FAILED: no test_*.py found in $(EXA_DIR)/ - nothing ran"; \
+		exit 1; \
+	fi; \
+	if [ $$failed -ne 0 ]; then \
+		echo "FAILED: $$failed of $$total test scripts"; \
+		exit 1; \
+	fi; \
+	echo "PASSED: all $$total test scripts"
 
 
 examples: $(TARGET) $(EXA_PRG) $(DISK_FILE) data

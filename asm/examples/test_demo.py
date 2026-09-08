@@ -59,7 +59,9 @@ def check(name, condition, detail=""):
 
 
 def find_c64asm():
-    for candidate in ['c64asm.py', '/mnt/user-data/outputs/c64asm.py']:
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in [os.path.join(here, os.pardir, 'single_src', 'c64asm.py'),
+                      'c64asm.py']:
         if os.path.exists(candidate):
             return candidate
     sys.exit("c64asm.py not found")
@@ -77,10 +79,15 @@ def symbol_address(listing_text, name):
 
 
 ASSEMBLER = find_c64asm()
+# The demos `.include "lib/..."`, which c64asm resolves relative to the
+# including file first; asm/lib/ is one level up from here, so it has to
+# come in via --lib-dir.
+LIBDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      os.pardir, 'lib')
 
 print("=== assembling demo.asm ===")
 result = subprocess.run(
-    ['python3', ASSEMBLER, 'demo.asm', '-o', '/tmp/demo_regress.prg',
+    ['python3', ASSEMBLER, '--lib-dir', LIBDIR, 'demo.asm', '-o', '/tmp/demo_regress.prg',
      '--listing', '/tmp/demo_regress.lst'],
     capture_output=True, text=True)
 check("demo.asm assembles cleanly", result.returncode == 0, result.stderr)
