@@ -11,11 +11,12 @@ of a CPU core that hasn't passed this.
 
 ## Getting the test binary
 
-**Not vendored into this repo.** The suite is GPL-3.0-licensed, and
-this project currently has no license of its own - same reasoning as
-`../../roms/README.md`'s copyrighted ROM images: don't commit
-third-party binaries this repo doesn't need to distribute, fetch them
-on demand instead.
+**Not vendored into this repo.** The suite is GPL-3.0-licensed and
+this repo is MIT, so vendoring it would put an incompatible license
+inside a tree that declares itself MIT. The same reasoning as
+`../../roms/README.md`'s copyrighted ROM images applies either way:
+don't commit third-party binaries this repo doesn't need to
+distribute, fetch them on demand instead.
 
 ```sh
 make fetch   # downloads 6502_functional_test.bin into this directory

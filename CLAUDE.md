@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Start here
+
+`scratch/daily-standup.md` — written at the end of the previous working day to
+be read at the start of the next: where the tree was left, what went in, and
+what is outstanding. `scratch/` is gitignored and is not part of this
+repository, so the file is absent on a fresh clone and on any day that was not
+closed out. When it is absent, `git log` and the documents named below are the
+way in.
+
 ## Repository layout
 
 This repo bundles three C64 toolchain projects. `asm/` and `C/` are
@@ -219,6 +228,28 @@ unit tests, it's the only gate that exercises the CPU, memory map, both
 CIAs, and VIC-II together against real third-party system software
 (SID isn't part of that gate — nothing observable in screen RAM depends
 on audio, and BASIC's own boot path never touches SID registers).
+
+## The records
+
+`ROADMAP.md` at the root tracks direction spanning the subprojects: what is
+open, what recently landed, and ideas nobody owns yet. `asm/`, `C/` and `emu/`
+each keep their own more detailed one (see "Roadmaps" above). There is no
+separate completed ledger, by shape rather than by omission: a finished item
+lives in root `ROADMAP.md`'s "Recently done" section, or as a struck-through
+entry in the subproject roadmap it belongs to. `asm/docs/CHANGELOG.md` says
+when the assembler shipped something, newest first; `C/` and `emu/` have no
+changelog of their own. `docs/POSTMORTEM.md` scores mistakes and predictions
+that have met evidence, toolkit-wide rather than per subproject.
+`docs/work-journal/` is the day book, one file per working day named
+`YYYY-MM-DD.md`, with the opening note and the index of days in its own
+`README.md`.
+
+Each of those opens with a note stating its own job, and that note is the
+specification for what belongs in it: follow it over any general instruction.
+The reference documents under `asm/docs/` and `C/docs/` are a different thing
+again, written for someone using the tool rather than recording the work, and
+`asm/docs/c64asm-reference.md` in particular is the authority on directive
+behavior over anything said here.
 
 ## Architecture
 

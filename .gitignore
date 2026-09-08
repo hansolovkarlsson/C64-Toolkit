@@ -18,3 +18,7 @@ __pycache__/
 # the same way.
 .DS_Store
 *~
+
+# scratch/ is Hans's own: notes and the daily standup, not part of the
+# repository. Nothing here reads it.
+scratch/
