@@ -43,7 +43,8 @@ gate - nothing in BASIC's own boot path touches SID registers). See
 `tests/cpu/README.md`, `tests/memory/README.md`, `tests/cia/README.md`,
 `tests/machine/README.md`, `tests/vic/README.md`, `tests/sid/README.md`,
 `tests/boot/README.md`, `tests/prg_inject/README.md`,
-`tests/disasm/README.md`, and this file's "Building" section below.
+`tests/disasm/README.md`, `tests/decimal/README.md`, and this file's
+"Building" section below.
 Joystick input works too - any SDL_GameController-recognized pad
 (Xbox controllers included) drives port 2, the port every
 joystick-aware demo in `../asm/examples/` reads. `--prg` also now
@@ -167,6 +168,7 @@ cd tests/sid && make run                     # SID (waveforms, ADSR envelopes, n
 cd tests/boot && make fetch && make run      # end-to-end: real ROMs, boots to READY.
 cd tests/prg_inject && make run              # --prg SYS-injection return trampoline (see below)
 cd tests/disasm && make run                  # disassembler opcode table + addressing modes
+cd tests/decimal && make run                 # decimal-mode ADC/SBC, exhaustive, A + N/V/Z/C
 ```
 
 `tests/boot/` is the one gate that isn't a single module's own

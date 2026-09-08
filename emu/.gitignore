@@ -11,6 +11,7 @@ tests/boot/test_boot
 tests/prg_inject/test_prg_inject
 tests/prg_inject/prg_inject_fixture.prg.tmp
 tests/disasm/test_disasm
+tests/decimal/test_decimal
 
 # ROM images (Commodore's copyrighted KERNAL/BASIC/character binaries)
 # - dump your own from a C64 you own, never commit these. See

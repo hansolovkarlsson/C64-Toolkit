@@ -213,16 +213,24 @@ cd emu/tests/prg_inject && make run
 # pane): opcode table + all 13 addressing modes, hand-checked against
 # asm/single_src/c64disasm.py's own output for the same bytes
 cd emu/tests/disasm && make run
+
+# Decimal-mode ADC/SBC (src/cpu.c): exhaustive, all 256x256 operand
+# pairs x both carry values x {immediate, zero page}, checking A and
+# N/V/Z/C. Covers what Dormann's suite explicitly does not - its own
+# source says decimal mode "tests documented behavior only, N V Z flags
+# are ignored" - see emu/tests/decimal/README.md
+cd emu/tests/decimal && make run
 ```
 
-All nine gates must pass before building on top of the module(s) they
+All ten gates must pass before building on top of the module(s) they
 cover — see `emu/tests/cpu/README.md`, `emu/tests/memory/README.md`,
 `emu/tests/cia/README.md`, `emu/tests/machine/README.md`,
 `emu/tests/vic/README.md`, `emu/tests/sid/README.md`,
 `emu/tests/boot/README.md`, `emu/tests/prg_inject/README.md`, and
-`emu/tests/disasm/README.md` for what "pass" looks like and how to
+`emu/tests/disasm/README.md`, and `emu/tests/decimal/README.md`
+for what "pass" looks like and how to
 re-derive the CPU suite's success address if a future revision of it
-moves. `emu/tests/boot/` is the odd one out among the other eight — it
+moves. `emu/tests/boot/` is the odd one out among the other nine — it
 isn't a single module's hand-derived
 unit tests, it's the only gate that exercises the CPU, memory map, both
 CIAs, and VIC-II together against real third-party system software
