@@ -13,12 +13,24 @@ keeping here have tended to cross the boundary: a `cc64` program was what first
 ran through `c64emu`'s `--prg` path, and a real C64 was what caught the
 zero-page assumption that `mini6502.py` had been happy with.
 
-Nothing has been scored here yet. This file is new, and the material that would
-have gone in it up to now was written into whichever roadmap or README owned
-the feature at the time. Those entries stay where they are; this is where the
-next one goes.
+This file is new as of 2026-09-08, and the material that would have gone in it
+before then was written into whichever roadmap or README owned the feature at
+the time. Those entries stay where they are; entries from that day on go here.
 
 The other records answer narrower questions: what is left
 ([`../ROADMAP.md`](../ROADMAP.md) and each subproject's own), what shipped in
 the assembler ([`../asm/docs/CHANGELOG.md`](../asm/docs/CHANGELOG.md)), and why
 a day went the way it did ([the work journal](work-journal/)).
+
+## 2026-09-08 A silent no-op was fixed once and its twin was never looked for
+**Issue**: The audit found that `asm/`'s `make test` runs no tests. It pipes each of the 16 demo `.prg` files into `python3 examples/mini6502.py`, which has no command-line entry point, so every run produces no output, no error and a zero exit. The same trap had already been found and fixed in root `CLAUDE.md`'s documented `C/` test command, and that fix is recorded in the root roadmap's "Recently done" as a bug caught by accident. The `asm/Makefile` copy survived that fix by weeks.
+**Root cause**: The first fix treated the defect as one wrong command rather than as a shape, a runner that reports success without checking anything, and nothing prompted a search for other places the shape occurred. The audit's other three findings about the test paths have the same shape: a per-demo suite that cannot find the assembler from where the documentation runs it, a compiler test loop that exits zero on a `BRK` halt and compares nothing, and a build script that looks for a binary where it has never been built.
+**Solution**: All four instances are recorded together on the root roadmap, under one entry, so that whoever fixes one sees the others. None is fixed yet.
+**Learnings**: A silent success is the hardest defect to notice, because the thing that would report it is the thing that is broken. When one instance is found, that is the moment to ask what else has the same shape, and a grep for the same command or the same script is a minute's work. The check that would have caught all four is to make each documented test command fail on purpose once, by breaking the thing it claims to test, and see whether it notices.
+
+## 2026-09-08 A count of seven written without checking each of the seven
+**Issue**: The audit's first commit said `emu/ROADMAP.md` still opens with "Nothing here is implemented yet" although all seven of its build-order steps are done. Six are. The seventh, SID, reads "in progress", with the chip core, the address-map wiring and the SDL2 audio output done and the analog filter not started.
+**Root cause**: The count was a claim about seven things made from the impression the page gives, six struck-through headings and a seventh that looks finished from a distance, rather than from reading each of the seven. The entry's argument was unaffected, which is exactly what made the number easy to write without checking: it was supporting detail, not the point.
+**Solution**: Corrected the same morning, in `078a566`. It surfaced only because a second sweep re-ran every number the first one had committed. The other five numbers in the same entry held exactly.
+**Learnings**: A number in a record is a claim, and the ones that are not the point get the least checking and are the ones that go wrong. The check that caught this is cheap and general: before committing an entry with numbers in it, re-derive each number from the tree rather than from the sentence that contains it. Futamura's postmortem of 2026-09-07 records the same lesson from the other side, where forty observed counts were right and three derived ones were wrong.
+

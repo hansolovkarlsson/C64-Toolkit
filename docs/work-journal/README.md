@@ -24,3 +24,4 @@ paragraph would fit in one of those, it belongs there and not here.
 
 | Day | |
 |---|---|
+| [2026-09-08](2026-09-08.md) | a records day: the first audit, the shared record convention, a count that was wrong by one, and four defects written down |
